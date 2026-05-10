@@ -1,13 +1,17 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdal-dev \
+    && rm -rf /var/lib/postgresql/data \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+# Install dependencies first for Docker layer caching.
+# requirements.txt is derived from pyproject.toml; changes to source code
+# alone won't invalidate this layer.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

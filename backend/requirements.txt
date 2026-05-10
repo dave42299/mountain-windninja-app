@@ -1,0 +1,15 @@
+# Derived from pyproject.toml [project.dependencies].
+# Used by the Dockerfile for Docker layer caching: install deps first,
+# copy source second, so dependency changes don't invalidate the source layer.
+fastapi>=0.115
+uvicorn[standard]>=0.34
+sqlalchemy>=2.0
+alembic>=1.14
+psycopg2-binary>=2.9
+pydantic>=2.10
+pydantic-settings>=2.7
+httpx>=0.28
+herbie-data>=2026.3
+rasterio>=1.4
+xarray>=2025.1
+py3dep>=0.18

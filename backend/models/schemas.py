@@ -1,10 +1,11 @@
 """Pydantic request/response schemas for the API."""
 
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from models.orm import ForecastStatus, SolverType, WeatherModel
+from .enums import ForecastStatus, SolverType, WeatherModel
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +25,7 @@ class ForecastAreaCreate(BaseModel):
 class ForecastAreaResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
+    id: uuid.UUID
     label: str | None
     center_latitude: float
     center_longitude: float
@@ -42,7 +43,7 @@ class TileResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
+    id: uuid.UUID
     bbox_north: float
     bbox_south: float
     bbox_east: float
@@ -65,7 +66,7 @@ class ForecastCreate(BaseModel):
     latitude/longitude/size_km directly for an ephemeral "click and run."
     """
 
-    forecast_area_id: str | None = None
+    forecast_area_id: uuid.UUID | None = None
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     size_km: float | None = Field(default=None, gt=0, le=50)
@@ -98,13 +99,13 @@ class ForecastCreate(BaseModel):
 class ForecastResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
-    forecast_area_id: str | None = None
+    id: uuid.UUID
+    forecast_area_id: uuid.UUID | None = None
     center_latitude: float
     center_longitude: float
     size_km: float
-    elevation_tile_id: str
-    land_cover_tile_id: str | None = None
+    elevation_tile_id: uuid.UUID
+    land_cover_tile_id: uuid.UUID | None = None
     status: ForecastStatus
     weather_model: WeatherModel
     solver_type: SolverType
@@ -115,3 +116,4 @@ class ForecastResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    updated_at: datetime

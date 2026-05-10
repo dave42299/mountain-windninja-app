@@ -2,7 +2,7 @@
 name = "mountain-windninja-backend"
 version = "0.1.0"
 description = "Backend API for Mountain WindNinja App"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
@@ -26,6 +26,9 @@ dev = [
     "mypy>=1.14",
 ]
 
+[tool.setuptools]
+py-modules = ["config"]
+
 [tool.setuptools.packages.find]
 include = ["api*", "models*", "services*"]
 
@@ -35,11 +38,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true

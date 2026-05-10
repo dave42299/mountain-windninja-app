@@ -1,0 +1,35 @@
+---
+description: Import convention - relative within packages, absolute across packages
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Import Conventions
+
+Within a package, use relative imports. Between packages, use absolute imports from the project root (`backend/`).
+
+## Within-package (relative)
+
+```python
+# In models/orm.py (same package as models/database.py)
+from .database import Base
+from .enums import ForecastStatus
+
+# In api/main.py (same package as api/routers/)
+from .routers import forecast_areas, forecasts
+```
+
+## Cross-package (absolute from project root)
+
+```python
+# In api/deps.py (importing from models and config packages)
+from models.database import build_engine
+from config import settings
+```
+
+## Never
+
+```python
+# Don't use absolute imports for within-package references
+from models.database import Base  # Wrong if you're inside models/orm.py
+```

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
     solver_image: str = "mountain-windninja:local"
     solver_threads: int = 4
+    cors_origins: list[str] = ["http://localhost:5173"]
 
 
 settings = Settings()

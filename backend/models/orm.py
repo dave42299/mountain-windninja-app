@@ -19,7 +19,8 @@ Design decisions documented here:
 
 - bbox columns are always stored in WGS84 decimal degrees regardless of the
   file's native CRS. This ensures spatial containment queries compare
-  consistently across tiles.
+  consistently across tiles. Each bbox column is individually indexed so
+  PostgreSQL can combine them via bitmap AND scans for containment queries.
 
 - Forecast records which specific elevation and land cover tiles were used,
   providing full traceability for reproducibility and validation.
@@ -31,16 +32,23 @@ Design decisions documented here:
 
 - Output directory is not stored; it is derived by convention from the
   forecast ID (data/output/{forecast_id}/) to avoid path bookkeeping.
+
+- Tile cache selection strategy:
+  - ElevationTile: pick the smallest tile that fully contains the requested
+    bbox (tightest spatial fit, avoids wasting disk/memory on oversized tiles).
+  - LandCoverTile: pick the most recently downloaded tile that fully contains
+    the requested bbox (land cover changes over time due to fire, logging, etc.,
+    so the newest data is the best default).
 """
 
-import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, Uuid
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text, Uuid, select
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from models.database import Base
+from .database import Base
+from .enums import ForecastStatus, SolverType
 
 
 def _utcnow() -> datetime:
@@ -49,29 +57,6 @@ def _utcnow() -> datetime:
 
 def _new_uuid() -> uuid.UUID:
     return uuid.uuid4()
-
-
-# ---------------------------------------------------------------------------
-# Enums
-# ---------------------------------------------------------------------------
-
-
-class ForecastStatus(str, enum.Enum):
-    queued = "queued"
-    fetching_weather = "fetching_weather"
-    running_solver = "running_solver"
-    completed = "completed"
-    failed = "failed"
-
-
-class WeatherModel(str, enum.Enum):
-    hrrr = "hrrr"
-    nbm = "nbm"
-
-
-class SolverType(str, enum.Enum):
-    mass_conservation = "mass_conservation"
-    momentum = "momentum"
 
 
 # ---------------------------------------------------------------------------
@@ -105,10 +90,11 @@ class ElevationTile(Base):
     # Bounding box in WGS84 decimal degrees for consistent spatial lookups,
     # even though the file itself is in UTM. Populated by reading the
     # downloaded file's extent and reprojecting corners to EPSG:4326.
-    bbox_north: Mapped[float] = mapped_column(Float, nullable=False)
-    bbox_south: Mapped[float] = mapped_column(Float, nullable=False)
-    bbox_east: Mapped[float] = mapped_column(Float, nullable=False)
-    bbox_west: Mapped[float] = mapped_column(Float, nullable=False)
+    # Individually indexed for bitmap AND scans on containment queries.
+    bbox_north: Mapped[float] = mapped_column(Float, nullable=False, index=True)
+    bbox_south: Mapped[float] = mapped_column(Float, nullable=False, index=True)
+    bbox_east: Mapped[float] = mapped_column(Float, nullable=False, index=True)
+    bbox_west: Mapped[float] = mapped_column(Float, nullable=False, index=True)
 
     # Native CRS of the file on disk (e.g. 32613 for UTM Zone 13N).
     # We choose this at download time for DEM; the weather service needs it
@@ -125,9 +111,31 @@ class ElevationTile(Base):
     source: Mapped[str] = mapped_column(String(30), nullable=False)
 
     downloaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     forecasts: Mapped[list["Forecast"]] = relationship(back_populates="elevation_tile")
+
+    @classmethod
+    def find_containing(
+        cls, session: Session, north: float, south: float, east: float, west: float
+    ) -> "ElevationTile | None":
+        """Find the smallest tile whose bbox fully contains the requested area.
+
+        "Smallest" = tightest spatial fit, measured by bbox area in degrees^2.
+        Returns None if no tile contains the full requested extent.
+        """
+        bbox_area = (cls.bbox_north - cls.bbox_south) * (cls.bbox_east - cls.bbox_west)
+        statement = (
+            select(cls)
+            .where(
+                cls.bbox_north >= north,
+                cls.bbox_south <= south,
+                cls.bbox_east >= east,
+                cls.bbox_west <= west,
+            )
+            .order_by(bbox_area)
+        )
+        return session.scalars(statement).first()
 
 
 # ---------------------------------------------------------------------------
@@ -143,10 +151,11 @@ class LandCoverTile(Base):
     # Bounding box in WGS84, same convention as ElevationTile.
     # The LCP file itself is in LANDFIRE's native CRS (typically CONUS
     # Albers EPSG:5070), so these are reprojected from the file extent.
-    bbox_north: Mapped[float] = mapped_column(Float, nullable=False)
-    bbox_south: Mapped[float] = mapped_column(Float, nullable=False)
-    bbox_east: Mapped[float] = mapped_column(Float, nullable=False)
-    bbox_west: Mapped[float] = mapped_column(Float, nullable=False)
+    # Individually indexed for bitmap AND scans on containment queries.
+    bbox_north: Mapped[float] = mapped_column(Float, nullable=False, index=True)
+    bbox_south: Mapped[float] = mapped_column(Float, nullable=False, index=True)
+    bbox_east: Mapped[float] = mapped_column(Float, nullable=False, index=True)
+    bbox_west: Mapped[float] = mapped_column(Float, nullable=False, index=True)
 
     # Native CRS of the file on disk. We don't control this -- LANDFIRE
     # returns data in its own projection (~30m CONUS Albers).
@@ -162,9 +171,31 @@ class LandCoverTile(Base):
     source: Mapped[str] = mapped_column(String(30), nullable=False)
 
     downloaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     forecasts: Mapped[list["Forecast"]] = relationship(back_populates="land_cover_tile")
+
+    @classmethod
+    def find_containing(
+        cls, session: Session, north: float, south: float, east: float, west: float
+    ) -> "LandCoverTile | None":
+        """Find the most recently downloaded tile whose bbox fully contains the requested area.
+
+        Land cover changes over time (fire, logging, development), so the
+        newest tile is the best default. Returns None if no tile contains the
+        full requested extent.
+        """
+        statement = (
+            select(cls)
+            .where(
+                cls.bbox_north >= north,
+                cls.bbox_south <= south,
+                cls.bbox_east >= east,
+                cls.bbox_west <= west,
+            )
+            .order_by(cls.downloaded_at.desc())
+        )
+        return session.scalars(statement).first()
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +212,7 @@ class Forecast(Base):
     # null for ephemeral "click and run" forecasts. SET NULL on area deletion
     # so forecasts survive when a user removes a saved location.
     forecast_area_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("forecast_areas.id", ondelete="SET NULL"), nullable=True
+        Uuid, ForeignKey("forecast_areas.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     # Location parameters are always stored directly on the forecast so we
@@ -200,7 +231,7 @@ class Forecast(Base):
     )
 
     status: Mapped[str] = mapped_column(
-        String(30), nullable=False, default=ForecastStatus.queued
+        String(30), nullable=False, default=ForecastStatus.queued, index=True
     )
     weather_model: Mapped[str] = mapped_column(String(10), nullable=False)
 
@@ -216,9 +247,14 @@ class Forecast(Base):
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
     forecast_area: Mapped["ForecastArea | None"] = relationship(back_populates="forecasts")
     elevation_tile: Mapped["ElevationTile"] = relationship(back_populates="forecasts")

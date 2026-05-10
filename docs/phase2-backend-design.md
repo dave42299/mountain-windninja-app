@@ -100,17 +100,20 @@ ForecastArea (optional saved location)
   id, label, center_latitude, center_longitude, size_km, created_at
 
 ElevationTile (cached DEM files)
-  id, bbox_north/south/east/west, crs_epsg, file_path, source, downloaded_at, file_size_bytes
+  id, bbox_north/south/east/west [indexed], crs_epsg, file_path, source,
+  downloaded_at, file_size_bytes (bigint)
 
 LandCoverTile (cached LCP files)
-  id, bbox_north/south/east/west, crs_epsg, file_path, source, downloaded_at, file_size_bytes
+  id, bbox_north/south/east/west [indexed], crs_epsg, file_path, source,
+  downloaded_at, file_size_bytes (bigint)
 
 Forecast (a single wind forecast job)
-  id, forecast_area_id (nullable FK → SET NULL), center_latitude, center_longitude, size_km,
+  id, forecast_area_id (nullable FK → SET NULL) [indexed],
+  center_latitude, center_longitude, size_km,
   elevation_tile_id (FK → RESTRICT), land_cover_tile_id (nullable FK → RESTRICT),
-  status (enum), weather_model (enum), solver_type (enum), output_wind_height,
+  status (enum) [indexed], weather_model (enum), solver_type (enum), output_wind_height,
   forecast_start, duration_hours,
-  error_message, created_at, started_at, completed_at
+  error_message, created_at [indexed], started_at, completed_at, updated_at (auto)
 ```
 
 Enums (defined in `backend/models/orm.py`, used by ORM defaults and Pydantic schemas):
@@ -123,6 +126,19 @@ Relationships:
 - ElevationTile is referenced by many Forecasts (RESTRICT deletion)
 - LandCoverTile is referenced by many Forecasts (nullable for non-US; RESTRICT deletion)
 
+Indexes:
+- Tile bbox columns are individually indexed for bitmap AND scans on spatial containment queries
+- `forecasts.status` for polling active/queued jobs
+- `forecasts.forecast_area_id` for listing forecasts per saved area
+- `forecasts.created_at` for listing recent forecasts
+
+Tile cache selection strategy (implemented as classmethods on tile models):
+- **ElevationTile:** smallest tile that fully contains the requested bbox (tightest spatial fit)
+- **LandCoverTile:** most recently downloaded tile that fully contains the requested bbox (newest data is best default, since land cover changes over time)
+
+Stale job detection:
+- `updated_at` is auto-set on every row update via SQLAlchemy `onupdate`. A forecast stuck in `running_solver` with a stale `updated_at` indicates a dead background worker.
+
 Naming convention:
 - `latitude` / `longitude` for user-input single-point coordinates (API create schemas)
 - `center_latitude` / `center_longitude` for area/domain center points (ORM, response schemas, ForecastArea)
@@ -130,6 +146,9 @@ Naming convention:
 
 File path convention:
 - Tile `file_path` values are stored relative to `settings.data_dir` (e.g. `elevation/abc123.tif`). The service layer resolves them to absolute paths at read time.
+
+Database initialization:
+- `database.py` has zero side effects at import time. It defines `Base` and provides `build_engine()` / `build_session_factory()` factory functions. The engine is created lazily by `deps.py` (via `@lru_cache`) on first HTTP request. This allows tests to override the URL and Alembic to manage its own engine independently.
 
 ## API Endpoints (planned)
 
@@ -177,20 +196,34 @@ User request (lat/lon, size_km, time, duration)
         +---> On failure: status -> failed, store error_message
 ```
 
+## Import Conventions
+
+Within a package, use relative imports (`from .database import Base`). Between packages, use absolute imports from the project root (`from models.database import build_engine`). Enforced via `.cursor/rules/import-conventions.mdc`.
+
+## App Startup
+
+The FastAPI lifespan handler creates the data directory structure on first startup:
+`data/{elevation, land_cover, output, weather}/`. The `data/` directory is git-ignored and convention-based -- the path is controlled by `settings.data_dir`.
+
 ## Files Implemented
 
 | File | Purpose |
 |------|---------|
-| `backend/config.py` | App settings via pydantic-settings (DB URL, data dir, solver image) |
-| `backend/models/database.py` | SQLAlchemy engine, session factory, declarative Base |
-| `backend/models/orm.py` | ORM models: ForecastArea, ElevationTile, LandCoverTile, Forecast |
-| `backend/models/schemas.py` | Pydantic request/response schemas |
-| `backend/api/main.py` | FastAPI app with CORS and router registration |
-| `backend/api/deps.py` | FastAPI dependencies (DB session, settings) |
+| `backend/config.py` | App settings via pydantic-settings (DB URL, data dir, solver image, CORS origins) |
+| `backend/models/database.py` | Declarative Base, engine/session factory builders (zero import side effects) |
+| `backend/models/enums.py` | ForecastStatus, WeatherModel, SolverType enums (no heavy imports) |
+| `backend/models/orm.py` | ORM models, tile cache selection classmethods |
+| `backend/models/schemas.py` | Pydantic request/response schemas with UUID validation |
+| `backend/api/main.py` | FastAPI app with lifespan, configurable CORS, router registration |
+| `backend/api/deps.py` | FastAPI dependencies: lazy DB engine (@lru_cache), session, settings |
 | `backend/api/routers/forecast_areas.py` | ForecastArea CRUD endpoints (stub) |
 | `backend/api/routers/forecasts.py` | Forecast submission and status endpoints (stub) |
+| `backend/requirements.txt` | Pinned dependencies for Docker layer caching (derived from pyproject.toml) |
+| `backend/Dockerfile` | Python 3.12 image with GDAL, deps-first layer caching |
 | `docker-compose.yml` | Postgres-only (backend runs natively) |
 | `.env.example` | Environment variable documentation |
+| `.cursor/rules/import-conventions.mdc` | Import convention rule (relative within, absolute across) |
+| `.cursor/rules/variable-naming.mdc` | Readable variable naming rule |
 
 ## Remaining Work
 

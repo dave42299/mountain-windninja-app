@@ -1,13 +1,6 @@
-from models.database import Base
-from models.orm import (
-    ElevationTile,
-    Forecast,
-    ForecastArea,
-    ForecastStatus,
-    LandCoverTile,
-    SolverType,
-    WeatherModel,
-)
+from .database import Base
+from .enums import ForecastStatus, SolverType, WeatherModel
+from .orm import ElevationTile, Forecast, ForecastArea, LandCoverTile
 
 __all__ = [
     "Base",
