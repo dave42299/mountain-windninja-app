@@ -11,7 +11,7 @@ from functools import lru_cache
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from config import settings as app_settings
+from config import Settings, settings as app_settings
 from models.database import build_engine, build_session_factory
 
 
@@ -33,5 +33,5 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def get_settings():
+def get_settings() -> Settings:
     return app_settings

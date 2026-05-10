@@ -4,7 +4,6 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdal-dev \
-    && rm -rf /var/lib/postgresql/data \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies first for Docker layer caching.

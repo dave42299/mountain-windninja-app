@@ -3,6 +3,8 @@ name = "mountain-windninja-backend"
 version = "0.1.0"
 description = "Backend API for Mountain WindNinja App"
 requires-python = ">=3.12"
+# NOTE: keep requirements.txt in sync -- it mirrors these deps for Docker
+# layer caching. See requirements.txt header for details.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",

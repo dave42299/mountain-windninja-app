@@ -48,7 +48,7 @@ from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String,
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from .database import Base
-from .enums import ForecastStatus, SolverType
+from .enums import ForecastStatus, SolverType, WeatherModel
 
 
 def _utcnow() -> datetime:
@@ -104,7 +104,7 @@ class ElevationTile(Base):
     # Relative to settings.data_dir (e.g. "elevation/abc123.tif").
     # Resolution is not stored because it's fixed by the data source
     # (10m for USGS 3DEP) and WindNinja reads it from the file directly.
-    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
 
     # Which upstream data source provided this tile.
     # Current values: "usgs_3dep". Future: "srtm", "gmted".
@@ -164,7 +164,7 @@ class LandCoverTile(Base):
     # Relative to settings.data_dir (e.g. "land_cover/abc123.lcp").
     # Resolution is not stored because it's fixed by LANDFIRE (~30m)
     # and WindNinja reads it from the file directly.
-    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
 
     # Current value: "landfire". Kept as a column for consistency with
     # ElevationTile and to support future land cover sources.
@@ -233,7 +233,9 @@ class Forecast(Base):
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default=ForecastStatus.queued, index=True
     )
-    weather_model: Mapped[str] = mapped_column(String(10), nullable=False)
+    weather_model: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=WeatherModel.hrrr
+    )
 
     solver_type: Mapped[str] = mapped_column(
         String(30), nullable=False, default=SolverType.momentum

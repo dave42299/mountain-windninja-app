@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from .enums import ForecastStatus, SolverType, WeatherModel
 
@@ -70,7 +70,7 @@ class ForecastCreate(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     size_km: float | None = Field(default=None, gt=0, le=50)
-    forecast_start: datetime
+    forecast_start: AwareDatetime
     duration_hours: int = Field(gt=0, le=48)
     weather_model: WeatherModel = WeatherModel.hrrr
     solver_type: SolverType = SolverType.momentum

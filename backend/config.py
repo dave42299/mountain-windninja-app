@@ -10,7 +10,11 @@ class Settings(BaseSettings):
     )
 
     database_url: str = "postgresql://windninja:windninja@localhost:5432/windninja"
+
+    # Relative path resolves from CWD: in local dev (run from backend/),
+    # this is backend/data/. In Docker (WORKDIR /app), this is /app/data/.
     data_dir: Path = Path("./data")
+
     solver_image: str = "mountain-windninja:local"
     solver_threads: int = 4
     cors_origins: list[str] = ["http://localhost:5173"]

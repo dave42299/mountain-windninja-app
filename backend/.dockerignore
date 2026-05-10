@@ -1,0 +1,36 @@
+# Python artifacts
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+
+# Version control
+.git/
+.gitignore
+
+# Environment / secrets
+.env
+.env.*
+
+# Runtime data (terrain tiles, weather downloads, solver output)
+data/
+
+# Documentation (not needed in the image)
+*.md
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Docker (prevent recursive context)
+Dockerfile
+.dockerignore
