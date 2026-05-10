@@ -27,6 +27,10 @@ The project builds on and extends the CLI-based workflow at [Austfi/mountain_win
 
 This project replaces the CLI front-end with a web application and adds cloud orchestration and 3D visualization.
 
+## Scope
+
+This project targets **United States locations only** for the initial implementation. Both primary terrain data sources (USGS 3DEP for elevation and LANDFIRE for land cover) provide high-resolution coverage across the US. International support (via SRTM/GMTED for elevation) may be added later but is not a design priority.
+
 ## Key Goals
 
 ### 1. User Interface for Forecast Input

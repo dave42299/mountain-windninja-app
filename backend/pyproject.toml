@@ -26,9 +26,12 @@ dev = [
     "mypy>=1.14",
 ]
 
+[tool.setuptools.packages.find]
+include = ["api*", "models*", "services*"]
+
 [build-system]
 requires = ["setuptools>=75"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 100

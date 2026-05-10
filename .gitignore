@@ -162,6 +162,7 @@ vite.config.ts.timestamp-*
 # ========== Solver / WindNinja ==========
 runtime/
 static_data/
+data/
 *.tif
 *.lcp
 *.asc

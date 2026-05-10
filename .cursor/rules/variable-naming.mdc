@@ -1,0 +1,20 @@
+---
+description: Prefer readable, descriptive variable names over cryptic abbreviations
+alwaysApply: true
+---
+
+# Variable Naming
+
+Prefer readable, self-documenting variable names. Avoid cryptic abbreviations or single-letter names outside of trivial loop indices.
+
+```python
+# Bad
+has_area = self.forecast_area_id is not None
+has_coords = self.latitude is not None
+
+# Good
+has_forecast_area = self.forecast_area_id is not None
+has_coordinates = self.latitude is not None
+```
+
+When naming boolean flags, prefix with `has_`, `is_`, or `should_` and spell out the full concept being tested.
