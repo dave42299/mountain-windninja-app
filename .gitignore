@@ -1,3 +1,20 @@
+# ========== Python ==========
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+
+# ========== Node / Frontend ==========
 # Logs
 logs
 *.log
@@ -141,3 +158,31 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# ========== Solver / WindNinja ==========
+runtime/
+static_data/
+*.tif
+*.lcp
+*.asc
+*.kmz
+*.grib2
+*.grb2
+
+# ========== Infrastructure ==========
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+
+# ========== IDE ==========
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ========== OS ==========
+.DS_Store
+Thumbs.db
