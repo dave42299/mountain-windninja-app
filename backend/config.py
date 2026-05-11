@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
 
     solver_image: str = "mountain-windninja:local"
+    # LANDFIRE LCP downloads via WindNinja ``fetch_dem`` can take many minutes.
+    terrain_lcp_subprocess_timeout_seconds: int = 3600
     solver_threads: int = 4
     cors_origins: list[str] = ["http://localhost:5173"]
 
