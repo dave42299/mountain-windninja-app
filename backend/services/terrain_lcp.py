@@ -1,8 +1,8 @@
 """LANDFIRE LCP download and cache for Phase 2 (continental US only).
 
-Runs WindNinja ``fetch_dem --src lcp`` inside the solver Docker image (same approach as
-``mwn.sh fetch-lcp``), writes ``{uuid}.lcp`` plus a ``.prj`` sidecar (WindNinja requires it),
-and records a ``LandCoverTile`` row with bbox in WGS84.
+Runs WindNinja ``fetch_dem --src lcp`` inside the solver Docker image,
+writes ``{uuid}.lcp`` plus a ``.prj`` sidecar (WindNinja requires it),
+and records a ``LandCoverTile`` row with bbox in WGS84 read from the file.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from models.orm import LandCoverTile
 from services.terrain_dem import validate_conus_wgs84_bbox
+from services.terrain_geometry import Wgs84BoundingBox
 
 LAND_COVER_SOURCE_LANDFIRE = "landfire"
 
@@ -56,10 +57,7 @@ def _run_lcp_docker_pipeline(
     solver_image: str,
     host_data_dir: Path,
     relative_lcp: Path,
-    north: float,
-    east: float,
-    south: float,
-    west: float,
+    download: Wgs84BoundingBox,
     subprocess_timeout_seconds: int,
 ) -> None:
     """Run ``fetch_dem`` and ``gdalsrsinfo`` in Docker (``solver_image``).
@@ -72,7 +70,8 @@ def _run_lcp_docker_pipeline(
     container_prj = (_CONTAINER_DATA_ROOT / relative_lcp).with_suffix(".prj").as_posix()
 
     inner_script = (
-        f"fetch_dem --bbox {north} {east} {south} {west} --src lcp {shlex.quote(container_lcp)}"
+        f"fetch_dem --bbox {download.north} {download.east} {download.south} {download.west} "
+        f"--src lcp {shlex.quote(container_lcp)}"
         f" && gdalsrsinfo -o wkt {shlex.quote(container_lcp)} > {shlex.quote(container_prj)}"
     )
     command = [
@@ -111,38 +110,31 @@ def _run_lcp_docker_pipeline(
 
 def ensure_land_cover_tile(
     session: Session,
-    north: float,
-    east: float,
-    south: float,
-    west: float,
     *,
+    lookup: Wgs84BoundingBox,
+    download: Wgs84BoundingBox,
     data_dir: Path,
     solver_image: str,
     subprocess_timeout_seconds: int = 3600,
 ) -> LandCoverTile:
-    """Return a cached or freshly downloaded LCP tile whose bbox contains the request.
+    """Return a cached or freshly downloaded LCP tile.
 
-    Args:
-        session: Open ORM session (caller commits).
-        north, east, south, west: Requested WGS84 bbox (degrees).
-        data_dir: Application data root; files go under ``land_cover/`` relative to this.
-        solver_image: Docker image with ``fetch_dem`` and GDAL (e.g. ``mountain-windninja:local``).
-        subprocess_timeout_seconds: Wall-clock limit for the combined Docker invocation.
-
-    Returns:
-        ``LandCoverTile`` with ``file_path`` pointing at the ``.lcp`` relative to ``data_dir``.
+    **Lookup** is the user's true WGS84 bbox. **Download** is the extent for ``fetch_dem``
+    (often padded). Stored bbox columns come **only** from the LCP file.
 
     Raises:
         ValueError: Invalid timeout.
-        TerrainOutsideUsError: Bbox not fully inside CONUS (from :func:`validate_conus_wgs84_bbox`).
+        TerrainOutsideUsError: Download bbox not fully inside CONUS.
         TerrainLcpError: Docker, ``fetch_dem``, ``gdalsrsinfo``, or metadata read failure.
     """
     if subprocess_timeout_seconds <= 0:
         raise ValueError("subprocess_timeout_seconds must be positive")
 
-    validate_conus_wgs84_bbox(north, east, south, west)
+    validate_conus_wgs84_bbox(download)
 
-    cached = LandCoverTile.find_containing(session, north, south, east, west)
+    cached = LandCoverTile.find_containing(
+        session, lookup.north, lookup.south, lookup.east, lookup.west
+    )
     if cached is not None:
         return cached
 
@@ -160,10 +152,7 @@ def ensure_land_cover_tile(
             solver_image=solver_image,
             host_data_dir=root,
             relative_lcp=relative_lcp,
-            north=north,
-            east=east,
-            south=south,
-            west=west,
+            download=download,
             subprocess_timeout_seconds=subprocess_timeout_seconds,
         )
     except TerrainLcpError:
@@ -185,19 +174,14 @@ def ensure_land_cover_tile(
         absolute_prj.unlink(missing_ok=True)
         raise TerrainLcpError("Could not read spatial metadata from LCP") from exc
 
-    north_stored = max(file_north, north)
-    south_stored = min(file_south, south)
-    east_stored = max(file_east, east)
-    west_stored = min(file_west, west)
-
     file_size_bytes = absolute_lcp.stat().st_size + absolute_prj.stat().st_size
 
     tile = LandCoverTile(
         id=tile_id,
-        bbox_north=north_stored,
-        bbox_south=south_stored,
-        bbox_east=east_stored,
-        bbox_west=west_stored,
+        bbox_north=file_north,
+        bbox_south=file_south,
+        bbox_east=file_east,
+        bbox_west=file_west,
         crs_epsg=crs_epsg,
         file_path=relative_lcp.as_posix(),
         source=LAND_COVER_SOURCE_LANDFIRE,

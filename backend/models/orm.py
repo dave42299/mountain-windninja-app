@@ -88,8 +88,8 @@ class ElevationTile(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_new_uuid)
 
     # Bounding box in WGS84 decimal degrees for consistent spatial lookups,
-    # even though the file itself is in UTM. Populated by reading the
-    # downloaded file's extent and reprojecting corners to EPSG:4326.
+    # even though the file itself is in UTM. Values are taken from the written
+    # file (actual cached extent), not merged with the download order bbox.
     # Individually indexed for bitmap AND scans on containment queries.
     bbox_north: Mapped[float] = mapped_column(Float, nullable=False, index=True)
     bbox_south: Mapped[float] = mapped_column(Float, nullable=False, index=True)
@@ -119,7 +119,10 @@ class ElevationTile(Base):
     def find_containing(
         cls, session: Session, north: float, south: float, east: float, west: float
     ) -> "ElevationTile | None":
-        """Find the smallest tile whose bbox fully contains the requested area.
+        """Find the smallest tile whose stored bbox fully contains the given user bbox.
+
+        ``north`` / ``east`` are maxima; ``south`` / ``west`` are minima (WGS84 degrees).
+        Callers pass the **user's true** forecast extent, not a padded download extent.
 
         "Smallest" = tightest spatial fit, measured by bbox area in degrees^2.
         Returns None if no tile contains the full requested extent.
@@ -148,9 +151,8 @@ class LandCoverTile(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_new_uuid)
 
-    # Bounding box in WGS84, same convention as ElevationTile.
-    # The LCP file itself is in LANDFIRE's native CRS (typically CONUS
-    # Albers EPSG:5070), so these are reprojected from the file extent.
+    # Bounding box in WGS84, same convention as ElevationTile. Values come from
+    # the written LCP (actual cached extent), reprojected from the file's CRS.
     # Individually indexed for bitmap AND scans on containment queries.
     bbox_north: Mapped[float] = mapped_column(Float, nullable=False, index=True)
     bbox_south: Mapped[float] = mapped_column(Float, nullable=False, index=True)
@@ -179,7 +181,10 @@ class LandCoverTile(Base):
     def find_containing(
         cls, session: Session, north: float, south: float, east: float, west: float
     ) -> "LandCoverTile | None":
-        """Find the most recently downloaded tile whose bbox fully contains the requested area.
+        """Find the most recent tile whose stored bbox fully contains the given user bbox.
+
+        ``north`` / ``east`` are maxima; ``south`` / ``west`` are minima (WGS84 degrees).
+        Callers pass the **user's true** forecast extent, not a padded download extent.
 
         Land cover changes over time (fire, logging, development), so the
         newest tile is the best default. Returns None if no tile contains the

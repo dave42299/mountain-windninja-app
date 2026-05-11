@@ -14,16 +14,35 @@ in the continental US. Not for polar regions or cross-dateline boxes.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 # Mean meters per degree of latitude (WGS84 sphere approximation, widely used).
 _METERS_PER_DEGREE_LATITUDE = 111_320.0
+
+
+@dataclass(frozen=True, slots=True)
+class Wgs84BoundingBox:
+    """Axis-aligned extent in WGS84 decimal degrees.
+
+    ``north`` and ``east`` are maxima; ``south`` and ``west`` are minima.
+    This matches :func:`square_bbox_wgs84` and terrain tile stored extents.
+    """
+
+    north: float
+    east: float
+    south: float
+    west: float
+
+    def as_tuple(self) -> tuple[float, float, float, float]:
+        """``(north, east, south, west)`` for interop with tuple-oriented callers."""
+        return (self.north, self.east, self.south, self.west)
 
 
 def square_bbox_wgs84(
     center_latitude: float,
     center_longitude: float,
     size_km: float,
-) -> tuple[float, float, float, float]:
+) -> Wgs84BoundingBox:
     """Return the axis-aligned square bbox in WGS84 enclosing a center point.
 
     The square is aligned with parallels and meridians: ``size_km`` is the
@@ -37,7 +56,7 @@ def square_bbox_wgs84(
         size_km: Full edge length of the square in kilometers, must be > 0.
 
     Returns:
-        ``(north, east, south, west)`` in decimal degrees.
+        A :class:`Wgs84BoundingBox` in decimal degrees.
 
     Raises:
         ValueError: Invalid inputs or latitude too close to a pole for a
@@ -64,16 +83,10 @@ def square_bbox_wgs84(
     east = center_longitude + delta_lon
     west = center_longitude - delta_lon
 
-    return (north, east, south, west)
+    return Wgs84BoundingBox(north=north, east=east, south=south, west=west)
 
 
-def pad_bbox_fraction(
-    north: float,
-    east: float,
-    south: float,
-    west: float,
-    fraction: float = 0.25,
-) -> tuple[float, float, float, float]:
+def pad_bbox_fraction(bbox: Wgs84BoundingBox, fraction: float = 0.25) -> Wgs84BoundingBox:
     """Expand a WGS84 bbox by a fraction of its half-extent on each side.
 
     The center of the box is preserved. Each axis is scaled so the total
@@ -82,18 +95,18 @@ def pad_bbox_fraction(
     25% (Phase 2 padding convention).
 
     Args:
-        north, east, south, west: Decimal degrees, must satisfy
-            ``north > south`` and ``east > west``.
+        bbox: Decimal degrees, must satisfy ``north > south`` and ``east > west``.
         fraction: Non-negative expansion factor (default 0.25).
 
     Returns:
-        ``(north, east, south, west)`` for the expanded box.
+        The expanded :class:`Wgs84BoundingBox`.
 
     Raises:
         ValueError: Invalid bbox or negative fraction.
     """
     if fraction < 0:
         raise ValueError("fraction must be non-negative")
+    north, east, south, west = bbox.north, bbox.east, bbox.south, bbox.west
     if north <= south:
         raise ValueError("north must be greater than south")
     if east <= west:
@@ -112,4 +125,4 @@ def pad_bbox_fraction(
     new_east = center_lon + new_half_lon
     new_west = center_lon - new_half_lon
 
-    return (new_north, new_east, new_south, new_west)
+    return Wgs84BoundingBox(north=new_north, east=new_east, south=new_south, west=new_west)

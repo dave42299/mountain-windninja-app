@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from models.database import Base
 from services import terrain_dem
-from services.terrain import ensure_elevation_tile
+from services.terrain import Wgs84BoundingBox, ensure_elevation_tile
 
 
 def _memory_session() -> Session:
@@ -56,26 +56,32 @@ def test_utm_epsg_from_wgs84_southern_hemisphere() -> None:
 
 
 def test_validate_conus_accepts_berthoud_region() -> None:
-    terrain_dem.validate_conus_wgs84_bbox(39.85, -105.65, 39.65, -105.85)
+    terrain_dem.validate_conus_wgs84_bbox(
+        Wgs84BoundingBox(north=39.85, east=-105.65, south=39.65, west=-105.85)
+    )
 
 
 def test_validate_conus_rejects_europe() -> None:
     with pytest.raises(terrain_dem.TerrainOutsideUsError):
-        terrain_dem.validate_conus_wgs84_bbox(55.0, 10.0, 54.0, 9.0)
+        terrain_dem.validate_conus_wgs84_bbox(
+            Wgs84BoundingBox(north=55.0, east=10.0, south=54.0, west=9.0)
+        )
 
 
 def test_validate_conus_rejects_invalid_lat_order() -> None:
     with pytest.raises(ValueError, match="north"):
-        terrain_dem.validate_conus_wgs84_bbox(39.0, -105.0, 40.0, -106.0)
+        terrain_dem.validate_conus_wgs84_bbox(
+            Wgs84BoundingBox(north=39.0, east=-105.0, south=40.0, west=-106.0)
+        )
 
 
-# Bbox (north, east, south, west) that lies inside the WGS84 footprint of
-# ``_fake_dem_epsg5070()`` after reproject/write (synthetic grid, not real terrain).
-_SYNTHETIC_DEM_BBOX = (
-    34.87023579240624,
-    -108.00226586664824,
-    34.86518365693566,
-    -108.00839563663581,
+# Bbox that lies inside the WGS84 footprint of ``_fake_dem_epsg5070()`` after
+# reproject/write (synthetic grid, not real terrain).
+_SYNTHETIC_DEM_BBOX = Wgs84BoundingBox(
+    north=34.87023579240624,
+    east=-108.00226586664824,
+    south=34.86518365693566,
+    west=-108.00839563663581,
 )
 
 
@@ -83,20 +89,17 @@ _SYNTHETIC_DEM_BBOX = (
 def test_ensure_elevation_tile_writes_file_and_row(mock_get_dem: object, tmp_path: Path) -> None:
     session = _memory_session()
     try:
-        north, east, south, west = _SYNTHETIC_DEM_BBOX
         tile = terrain_dem.ensure_elevation_tile(
             session,
-            north,
-            east,
-            south,
-            west,
+            lookup=_SYNTHETIC_DEM_BBOX,
+            download=_SYNTHETIC_DEM_BBOX,
             data_dir=tmp_path,
         )
         session.commit()
 
         assert tile.source == terrain_dem.ELEVATION_SOURCE_USGS_3DEP
-        center_lat = (north + south) / 2.0
-        center_lon = (east + west) / 2.0
+        center_lat = (_SYNTHETIC_DEM_BBOX.north + _SYNTHETIC_DEM_BBOX.south) / 2.0
+        center_lon = (_SYNTHETIC_DEM_BBOX.east + _SYNTHETIC_DEM_BBOX.west) / 2.0
         assert tile.crs_epsg == terrain_dem.utm_epsg_from_wgs84(center_lat, center_lon)
         assert tile.file_path.startswith("elevation/")
         assert tile.file_path.endswith(".tif")
@@ -112,23 +115,25 @@ def test_ensure_elevation_tile_writes_file_and_row(mock_get_dem: object, tmp_pat
 def test_ensure_elevation_tile_reuses_cache(mock_get_dem: object, tmp_path: Path) -> None:
     session = _memory_session()
     try:
-        north, east, south, west = _SYNTHETIC_DEM_BBOX
         first = terrain_dem.ensure_elevation_tile(
             session,
-            north,
-            east,
-            south,
-            west,
+            lookup=_SYNTHETIC_DEM_BBOX,
+            download=_SYNTHETIC_DEM_BBOX,
             data_dir=tmp_path,
         )
         session.flush()
 
+        # Lookup must lie strictly inside the file-derived stored bbox (not the
+        # original synthetic label) for find_containing to match.
         second = terrain_dem.ensure_elevation_tile(
             session,
-            north,
-            east,
-            south,
-            west,
+            lookup=Wgs84BoundingBox(
+                north=first.bbox_north - 1e-4,
+                east=first.bbox_east - 1e-4,
+                south=first.bbox_south + 1e-4,
+                west=first.bbox_west + 1e-4,
+            ),
+            download=_SYNTHETIC_DEM_BBOX,
             data_dir=tmp_path,
         )
         session.commit()
@@ -149,8 +154,7 @@ def test_terrain_module_wraps_default_data_dir(
     session = _memory_session()
     try:
         with patch("services.terrain_dem.py3dep.get_dem", return_value=_fake_dem_epsg5070()):
-            north, east, south, west = _SYNTHETIC_DEM_BBOX
-            tile = ensure_elevation_tile(session, north, east, south, west)
+            tile = ensure_elevation_tile(session, _SYNTHETIC_DEM_BBOX)
         session.commit()
         assert (tmp_path / tile.file_path).is_file()
     finally:

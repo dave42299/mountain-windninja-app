@@ -55,3 +55,6 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: exercises network and/or Docker; enable with RUN_TERRAIN_INTEGRATION=1",
+]

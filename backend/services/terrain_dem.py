@@ -1,7 +1,7 @@
 """USGS 3DEP DEM download and cache for Phase 2 (continental US only).
 
 Uses py3dep on the host (no Docker), writes a UTM GeoTIFF under ``data_dir/elevation/``,
-and records an ``ElevationTile`` row with bbox in WGS84 (from the written file).
+and records an ``ElevationTile`` row with bbox in WGS84 read from the written file.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from rasterio.warp import transform_bounds
 from sqlalchemy.orm import Session
 
 from models.orm import ElevationTile
+from services.terrain_geometry import Wgs84BoundingBox
 
 ELEVATION_SOURCE_USGS_3DEP = "usgs_3dep"
 
@@ -50,17 +51,17 @@ def utm_epsg_from_wgs84(latitude: float, longitude: float) -> int:
     return 32_700 + zone
 
 
-def validate_conus_wgs84_bbox(north: float, east: float, south: float, west: float) -> None:
+def validate_conus_wgs84_bbox(bbox: Wgs84BoundingBox) -> None:
     """Raise ``TerrainOutsideUsError`` if the bbox is not fully inside the CONUS envelope."""
-    if north <= south:
+    if bbox.north <= bbox.south:
         raise ValueError("north must be greater than south")
-    if east <= west:
+    if bbox.east <= bbox.west:
         raise ValueError("east must be greater than west")
     if (
-        north > _CONUS_NORTH
-        or south < _CONUS_SOUTH
-        or east > _CONUS_EAST
-        or west < _CONUS_WEST
+        bbox.north > _CONUS_NORTH
+        or bbox.south < _CONUS_SOUTH
+        or bbox.east > _CONUS_EAST
+        or bbox.west < _CONUS_WEST
     ):
         raise TerrainOutsideUsError(
             "Forecast extent must lie fully inside the continental United States "
@@ -71,31 +72,35 @@ def validate_conus_wgs84_bbox(north: float, east: float, south: float, west: flo
 
 def ensure_elevation_tile(
     session: Session,
-    north: float,
-    east: float,
-    south: float,
-    west: float,
     *,
+    lookup: Wgs84BoundingBox,
+    download: Wgs84BoundingBox,
     data_dir: Path,
 ) -> ElevationTile:
-    """Return a cached or freshly downloaded DEM tile whose bbox contains the request.
+    """Return a cached or freshly downloaded DEM tile.
+
+    **Lookup** is the user's true WGS84 bbox (north/east are maxima). A cache hit is
+    any tile whose stored bbox fully contains that box.
+
+    **Download** is the WGS84 extent passed to py3dep (often larger than the lookup
+    box, e.g. after padding) so on-disk data covers nearby forecasts.
+
+    Stored ``ElevationTile`` bbox columns are taken **only** from the written GeoTIFF
+    (axis-aligned hull in WGS84), so the index reflects actual file extent.
 
     Args:
         session: Open ORM session (caller commits).
-        north, east, south, west: Requested WGS84 bbox (degrees), same convention as
-            :mod:`services.terrain_geometry` (north/east are maxima).
         data_dir: Application data root; files go under ``elevation/`` relative to this.
 
-    Returns:
-        ``ElevationTile`` with ``file_path`` relative to ``data_dir``.
-
     Raises:
-        TerrainOutsideUsError: Bbox not fully inside CONUS.
+        TerrainOutsideUsError: Download bbox not fully inside CONUS.
         TerrainDemError: py3dep or raster I/O failure.
     """
-    validate_conus_wgs84_bbox(north, east, south, west)
+    validate_conus_wgs84_bbox(download)
 
-    cached = ElevationTile.find_containing(session, north, south, east, west)
+    cached = ElevationTile.find_containing(
+        session, lookup.north, lookup.south, lookup.east, lookup.west
+    )
     if cached is not None:
         return cached
 
@@ -103,11 +108,11 @@ def ensure_elevation_tile(
     elevation_dir = root / "elevation"
     elevation_dir.mkdir(parents=True, exist_ok=True)
 
-    center_lat = (north + south) / 2.0
-    center_lon = (east + west) / 2.0
+    center_lat = (download.north + download.south) / 2.0
+    center_lon = (download.east + download.west) / 2.0
     utm_epsg = utm_epsg_from_wgs84(center_lat, center_lon)
 
-    west_south_east_north = (west, south, east, north)
+    west_south_east_north = (download.west, download.south, download.east, download.north)
     try:
         dem = py3dep.get_dem(west_south_east_north, resolution=10, crs=4326)
         dem_utm = dem.rio.reproject(f"EPSG:{utm_epsg}", resampling=Resampling.bilinear)
@@ -144,20 +149,12 @@ def ensure_elevation_tile(
 
     west_4326, south_4326, east_4326, north_4326 = wgs84_bounds
 
-    # The axis-aligned WGS84 hull of a UTM footprint can be slightly tighter than
-    # the original request in lon/lat. Union with the requested bbox so
-    # ``find_containing`` remains correct for the same request on cache hits.
-    north_stored = max(north_4326, north)
-    south_stored = min(south_4326, south)
-    east_stored = max(east_4326, east)
-    west_stored = min(west_4326, west)
-
     tile = ElevationTile(
         id=tile_id,
-        bbox_north=north_stored,
-        bbox_south=south_stored,
-        bbox_east=east_stored,
-        bbox_west=west_stored,
+        bbox_north=north_4326,
+        bbox_south=south_4326,
+        bbox_east=east_4326,
+        bbox_west=west_4326,
         crs_epsg=crs_epsg,
         file_path=relative_path.as_posix(),
         source=ELEVATION_SOURCE_USGS_3DEP,

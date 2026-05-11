@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from models.database import Base
 from services import terrain_lcp
-from services.terrain import ensure_land_cover_tile
+from services.terrain import Wgs84BoundingBox, ensure_land_cover_tile
 from services.terrain_dem import TerrainOutsideUsError
 
 
@@ -35,10 +35,8 @@ def test_validate_conus_rejects_non_us_for_lcp() -> None:
         with pytest.raises(TerrainOutsideUsError):
             terrain_lcp.ensure_land_cover_tile(
                 session,
-                55.0,
-                10.0,
-                54.0,
-                9.0,
+                lookup=Wgs84BoundingBox(north=55.0, east=10.0, south=54.0, west=9.0),
+                download=Wgs84BoundingBox(north=55.0, east=10.0, south=54.0, west=9.0),
                 data_dir=Path("/tmp"),
                 solver_image="img",
                 subprocess_timeout_seconds=60,
@@ -57,10 +55,7 @@ def test_run_lcp_docker_pipeline_builds_expected_command(tmp_path: Path) -> None
             solver_image="testimg",
             host_data_dir=root,
             relative_lcp=relative,
-            north=40.0,
-            east=-105.0,
-            south=39.5,
-            west=-105.6,
+            download=Wgs84BoundingBox(north=40.0, east=-105.0, south=39.5, west=-105.6),
             subprocess_timeout_seconds=90,
         )
     mock_run.assert_called_once()
@@ -93,12 +88,13 @@ def test_ensure_land_cover_tile_writes_row(
 
     session = _memory_session()
     try:
+        lookup = Wgs84BoundingBox(
+            north=39.82, east=-105.60, south=39.68, west=-105.80
+        )
         tile = terrain_lcp.ensure_land_cover_tile(
             session,
-            39.82,
-            -105.60,
-            39.68,
-            -105.80,
+            lookup=lookup,
+            download=lookup,
             data_dir=tmp_path,
             solver_image="mountain-windninja:local",
             subprocess_timeout_seconds=120,
@@ -135,13 +131,11 @@ def test_ensure_land_cover_tile_reuses_cache(
 
     session = _memory_session()
     try:
-        north, east, south, west = 39.82, -105.60, 39.68, -105.80
+        lookup = Wgs84BoundingBox(north=39.82, east=-105.60, south=39.68, west=-105.80)
         first = terrain_lcp.ensure_land_cover_tile(
             session,
-            north,
-            east,
-            south,
-            west,
+            lookup=lookup,
+            download=lookup,
             data_dir=tmp_path,
             solver_image="img",
             subprocess_timeout_seconds=120,
@@ -149,10 +143,8 @@ def test_ensure_land_cover_tile_reuses_cache(
         session.flush()
         second = terrain_lcp.ensure_land_cover_tile(
             session,
-            north,
-            east,
-            south,
-            west,
+            lookup=lookup,
+            download=lookup,
             data_dir=tmp_path,
             solver_image="img",
             subprocess_timeout_seconds=120,
@@ -194,7 +186,10 @@ def test_terrain_module_wraps_land_cover_settings(
                 )
 
             mock_run.side_effect = _side_effect
-            ensure_land_cover_tile(session, 39.82, -105.60, 39.68, -105.80)
+            ensure_land_cover_tile(
+                session,
+                Wgs84BoundingBox(north=39.82, east=-105.60, south=39.68, west=-105.80),
+            )
         session.commit()
     finally:
         session.close()
@@ -206,10 +201,8 @@ def test_non_positive_timeout_raises() -> None:
         with pytest.raises(ValueError, match="positive"):
             terrain_lcp.ensure_land_cover_tile(
                 session,
-                39.82,
-                -105.60,
-                39.68,
-                -105.80,
+                lookup=Wgs84BoundingBox(north=39.82, east=-105.60, south=39.68, west=-105.80),
+                download=Wgs84BoundingBox(north=39.82, east=-105.60, south=39.68, west=-105.80),
                 data_dir=Path("/tmp"),
                 solver_image="img",
                 subprocess_timeout_seconds=0,
