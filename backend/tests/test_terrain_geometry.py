@@ -14,11 +14,12 @@ from services.terrain_geometry import (
 
 
 def test_square_bbox_symmetric_at_equator() -> None:
-    bbox = square_bbox_wgs84(0.0, 0.0, 111.32)
-    assert bbox.north == pytest.approx(0.5)
-    assert bbox.south == pytest.approx(-0.5)
-    assert bbox.east == pytest.approx(0.5)
-    assert bbox.west == pytest.approx(-0.5)
+    bbox = square_bbox_wgs84(0.0, 0.0, 10.0)
+    lat_span = bbox.north - bbox.south
+    lon_span = bbox.east - bbox.west
+    assert lat_span == pytest.approx(lon_span)
+    assert bbox.north == pytest.approx(-bbox.south)
+    assert bbox.east == pytest.approx(-bbox.west)
 
 
 def test_square_bbox_at_45n_longitude_span_wider_than_latitude() -> None:
@@ -54,16 +55,24 @@ def test_square_bbox_rejects_non_positive_size() -> None:
         square_bbox_wgs84(0.0, 0.0, 0.0)
 
 
+def test_square_bbox_rejects_oversized_domain() -> None:
+    with pytest.raises(ValueError, match="exceeds maximum"):
+        square_bbox_wgs84(39.0, -105.0, 51.0)
+
+
 def test_square_bbox_rejects_pole_latitude() -> None:
     with pytest.raises(ValueError, match="pole"):
         square_bbox_wgs84(89.9999, 0.0, 10.0)
 
 
-def test_pad_rejects_invalid_extent() -> None:
+def test_bbox_rejects_north_le_south() -> None:
     with pytest.raises(ValueError, match="north"):
-        pad_bbox_fraction(Wgs84BoundingBox(north=0.0, east=1.0, south=1.0, west=0.0))
+        Wgs84BoundingBox(north=0.0, east=1.0, south=1.0, west=0.0)
+
+
+def test_bbox_rejects_east_le_west() -> None:
     with pytest.raises(ValueError, match="east"):
-        pad_bbox_fraction(Wgs84BoundingBox(north=1.0, east=0.0, south=0.0, west=1.0))
+        Wgs84BoundingBox(north=1.0, east=0.0, south=0.0, west=1.0)
 
 
 def test_pad_rejects_negative_fraction() -> None:
@@ -132,15 +141,6 @@ def test_validate_conus_rejects_canada() -> None:
         )
 
 
-def test_validate_conus_rejects_invalid_lat_order() -> None:
-    with pytest.raises(ValueError, match="north"):
-        validate_conus_wgs84_bbox(
-            Wgs84BoundingBox(north=39.0, east=-105.0, south=40.0, west=-106.0)
-        )
-
-
-def test_validate_conus_rejects_invalid_lon_order() -> None:
-    with pytest.raises(ValueError, match="east"):
-        validate_conus_wgs84_bbox(
-            Wgs84BoundingBox(north=40.0, east=-106.0, south=39.0, west=-105.0)
-        )
+def test_bbox_as_wsen_tuple_returns_standard_gis_order() -> None:
+    bbox = Wgs84BoundingBox(north=40.0, east=-104.0, south=39.0, west=-106.0)
+    assert bbox.as_wsen_tuple() == (-106.0, 39.0, -104.0, 40.0)

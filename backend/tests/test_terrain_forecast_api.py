@@ -148,7 +148,7 @@ def test_ensure_tiles_rejects_non_conus_after_pad(db_session: object) -> None:
             db_session,  # type: ignore[arg-type]
             center_latitude=50.0,
             center_longitude=-105.0,
-            size_km=500.0,
+            size_km=10.0,
         )
 
 

@@ -1,9 +1,7 @@
 """Pure geometry helpers and CONUS validation for terrain bounding boxes in WGS84.
 
 All coordinates are decimal degrees. North and east are the maximum latitude
-and longitude of the box; south and west are the minimum. This matches the
-order used elsewhere (north, east, south, west) and typical GIS conventions
-for a simple rectangular extent in geographic coordinates.
+and longitude of the box; south and west are the minimum.
 
 Latitude/longitude lengths are approximated with a sphere: one degree of
 latitude is treated as a constant meter length; one degree of longitude
@@ -22,13 +20,15 @@ from dataclasses import dataclass
 # Mean meters per degree of latitude (WGS84 sphere approximation, widely used).
 _METERS_PER_DEGREE_LATITUDE = 111_320.0
 
+_MAX_SIZE_KM = 50.0
+
 
 @dataclass(frozen=True, slots=True)
 class Wgs84BoundingBox:
     """Axis-aligned extent in WGS84 decimal degrees.
 
     ``north`` and ``east`` are maxima; ``south`` and ``west`` are minima.
-    This matches :func:`square_bbox_wgs84` and terrain tile stored extents.
+    Construction validates ``north > south`` and ``east > west``.
     """
 
     north: float
@@ -36,9 +36,19 @@ class Wgs84BoundingBox:
     south: float
     west: float
 
-    def as_tuple(self) -> tuple[float, float, float, float]:
-        """``(north, east, south, west)`` for interop with tuple-oriented callers."""
-        return (self.north, self.east, self.south, self.west)
+    def __post_init__(self) -> None:
+        if self.north <= self.south:
+            raise ValueError(
+                f"north ({self.north}) must be greater than south ({self.south})"
+            )
+        if self.east <= self.west:
+            raise ValueError(
+                f"east ({self.east}) must be greater than west ({self.west})"
+            )
+
+    def as_wsen_tuple(self) -> tuple[float, float, float, float]:
+        """``(west, south, east, north)`` — standard GIS minx/miny/maxx/maxy order."""
+        return (self.west, self.south, self.east, self.north)
 
 
 def square_bbox_wgs84(
@@ -56,7 +66,7 @@ def square_bbox_wgs84(
     Args:
         center_latitude: Degrees north, (-90, 90).
         center_longitude: Degrees east, [-180, 180].
-        size_km: Full edge length of the square in kilometers, must be > 0.
+        size_km: Full edge length of the square in kilometers (0 < size_km <= 50).
 
     Returns:
         A :class:`Wgs84BoundingBox` in decimal degrees.
@@ -67,6 +77,11 @@ def square_bbox_wgs84(
     """
     if size_km <= 0:
         raise ValueError("size_km must be positive")
+    if size_km > _MAX_SIZE_KM:
+        raise ValueError(
+            f"size_km ({size_km}) exceeds maximum allowed domain size "
+            f"({_MAX_SIZE_KM} km)"
+        )
     if not -90.0 < center_latitude < 90.0:
         raise ValueError("center_latitude must be strictly between -90 and 90")
     if not -180.0 <= center_longitude <= 180.0:
@@ -98,22 +113,19 @@ def pad_bbox_fraction(bbox: Wgs84BoundingBox, fraction: float = 0.25) -> Wgs84Bo
     25% (Phase 2 padding convention).
 
     Args:
-        bbox: Decimal degrees, must satisfy ``north > south`` and ``east > west``.
+        bbox: Valid :class:`Wgs84BoundingBox` (constructor enforces north > south,
+            east > west).
         fraction: Non-negative expansion factor (default 0.25).
 
     Returns:
         The expanded :class:`Wgs84BoundingBox`.
 
     Raises:
-        ValueError: Invalid bbox or negative fraction.
+        ValueError: Negative fraction.
     """
     if fraction < 0:
         raise ValueError("fraction must be non-negative")
     north, east, south, west = bbox.north, bbox.east, bbox.south, bbox.west
-    if north <= south:
-        raise ValueError("north must be greater than south")
-    if east <= west:
-        raise ValueError("east must be greater than west")
 
     center_lat = (north + south) / 2.0
     half_lat = (north - south) / 2.0
@@ -147,15 +159,7 @@ class TerrainOutsideUsError(ValueError):
 
 
 def validate_conus_wgs84_bbox(bbox: Wgs84BoundingBox) -> None:
-    """Raise ``TerrainOutsideUsError`` if ``bbox`` is not fully inside the CONUS envelope.
-
-    Also raises ``ValueError`` if the bbox is geometrically invalid (``north <= south``
-    or ``east <= west``).
-    """
-    if bbox.north <= bbox.south:
-        raise ValueError("north must be greater than south")
-    if bbox.east <= bbox.west:
-        raise ValueError("east must be greater than west")
+    """Raise ``TerrainOutsideUsError`` if ``bbox`` is not fully inside the CONUS envelope."""
     if (
         bbox.north > _CONUS_NORTH
         or bbox.south < _CONUS_SOUTH

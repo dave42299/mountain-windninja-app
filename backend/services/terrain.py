@@ -123,6 +123,11 @@ def _read_raster_wgs84_metadata(path: Path) -> tuple[Wgs84BoundingBox, int]:
 # ---------------------------------------------------------------------------
 # Per-layer ensure functions
 # ---------------------------------------------------------------------------
+# TODO(Phase 4): Add cache eviction strategy. Tiles currently accumulate
+# without bound. Options include eviction by age, total disk budget, or
+# unreferenced-tile cleanup (tiles not linked to any Forecast row).
+# file_size_bytes on tile rows supports a disk-budget approach without
+# scanning the filesystem.
 
 
 def ensure_elevation_tile(
