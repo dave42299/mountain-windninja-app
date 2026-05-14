@@ -1,7 +1,7 @@
 # Phase 2: Backend API Design Report
 
-**Date:** May 10, 2026
-**Status:** In progress — terrain pipeline implemented; weather, solver, and full forecast HTTP handlers still pending
+**Date:** May 14, 2026
+**Status:** In progress — terrain pipeline implemented and reviewed; weather, solver, and full forecast HTTP handlers still pending
 
 ## Objective
 
@@ -202,11 +202,37 @@ User request (lat/lon, size_km, time, duration)
         +---> On failure: status -> failed, store error_message
 ```
 
-## Terrain service implementation
+## Terrain service
 
-The terrain layer turns a forecast location (center latitude/longitude and ``size_km``) into two on-disk assets plus database rows: a **DEM** (GeoTIFF) and **land cover** (LANDFIRE LCP with a projection sidecar). Code lives under ``backend/services/`` with a small public surface in ``terrain.py`` and separate modules for geometry, DEM, and land cover.
+### Design principles
 
-**Orchestration.** ``ensure_tiles_for_forecast`` builds the **user bbox** (square in WGS84 from center + ``size_km``), builds a **padded bbox** (default 25% fractional padding on that square), validates the padded extent is inside **continental US**, then calls the DEM and LCP helpers. Each helper **queries the cache with the user bbox** and, on a miss, **downloads using the padded bbox**. The orchestrator **commits after each helper** so DEM and LCP stay independently durable (see **Transactions vs retries**). The frozen ``ForecastTerrainTiles`` result includes both tiles plus **user** and **padded** bboxes for callers (e.g. logging or solver setup).
+These principles were established during terrain service development and should guide the rest of the backend:
+
+- **Make invalid states unrepresentable.** Value objects validate at construction. ``Wgs84BoundingBox`` enforces ``north > south`` and ``east > west`` via ``__post_init__``; code that receives one can trust it without re-checking. Domain size is capped (50 km) to prevent runaway downloads before the request reaches any external API.
+
+- **Single public surface, layered internals.** ``terrain.py`` is the only module other code imports. Source-specific download logic (USGS 3DEP, LANDFIRE LCP) and pure geometry live in sub-modules the public API calls but external code never touches.
+
+- **Independent layer durability.** DEM and LCP are independent caches with independent transaction commits. If LCP fails after DEM succeeds, the DEM row and file survive so the next attempt retries only the failed layer.
+
+- **Metadata reflects reality, not intent.** Stored bbox columns are populated from the file actually written to disk, not from the padded request that triggered the download. Cache queries answer "do we have pixels here?" not "did we ask for pixels here?"
+
+- **No orphans on failure.** Every download path cleans up partial files if metadata extraction or ORM insertion fails. A committed tile row always has a valid file behind it.
+
+- **Typed errors for each failure mode.** ``TerrainDemError``, ``TerrainLcpError``, and ``TerrainOutsideUsError`` let the API layer map failures to appropriate HTTP responses without inspecting messages.
+
+### Key invariants
+
+- A ``Wgs84BoundingBox`` always satisfies ``north > south`` and ``east > west``.
+- Cache lookup uses the **user bbox**; padding only enlarges the **download**.
+- A tile row is never committed without the corresponding file existing on disk.
+- A ``Forecast`` row is never inserted until both tile IDs exist.
+- The terrain service owns its own transaction commits; callers must not wrap terrain resolution and Forecast insertion in a single transaction.
+
+### Implementation summary
+
+The terrain layer turns a forecast location (center lat/lon + ``size_km``) into two on-disk assets plus database rows: a DEM (GeoTIFF) and land cover (LANDFIRE LCP with ``.prj`` sidecar).
+
+**Orchestration.** ``ensure_tiles_for_forecast`` builds the user bbox, pads it (default 25%), validates the padded extent falls inside CONUS, and resolves each layer. The frozen ``ForecastTerrainTiles`` result carries both tiles plus user and padded bboxes for downstream callers (solver config, logging).
 
 **Transactions vs retries.** Elevation and land cover are **independent** caches (different tables, different download paths). There is no “terrain pair” invariant at the database layer: you never insert a ``Forecast`` until **both** tile IDs exist, so a row that references only one FK is not a concern for tile persistence.
 
