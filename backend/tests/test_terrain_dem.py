@@ -1,4 +1,4 @@
-"""Tests for USGS 3DEP DEM helpers and cache (mocked network)."""
+"""Tests for USGS 3DEP DEM helpers and cache (network mocked)."""
 
 from __future__ import annotations
 
@@ -9,19 +9,11 @@ import numpy as np
 import pytest
 import rioxarray  # noqa: F401 — registers ``.rio`` on xarray
 import xarray as xr
+from py3dep.exceptions import ServiceUnavailableError
 from rasterio.transform import from_bounds
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
 
-from models.database import Base
 from services import terrain_dem
-from services.terrain import Wgs84BoundingBox, ensure_elevation_tile
-
-
-def _memory_session() -> Session:
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)()
+from services.terrain import TerrainDemError, Wgs84BoundingBox, ensure_elevation_tile
 
 
 def _fake_dem_epsg5070() -> xr.DataArray:
@@ -47,36 +39,8 @@ def _fake_dem_epsg5070() -> xr.DataArray:
     )
 
 
-def test_utm_epsg_from_wgs84_denver() -> None:
-    assert terrain_dem.utm_epsg_from_wgs84(39.74, -104.99) == 32613
-
-
-def test_utm_epsg_from_wgs84_southern_hemisphere() -> None:
-    assert terrain_dem.utm_epsg_from_wgs84(-33.86, 151.2) == 32756
-
-
-def test_validate_conus_accepts_berthoud_region() -> None:
-    terrain_dem.validate_conus_wgs84_bbox(
-        Wgs84BoundingBox(north=39.85, east=-105.65, south=39.65, west=-105.85)
-    )
-
-
-def test_validate_conus_rejects_europe() -> None:
-    with pytest.raises(terrain_dem.TerrainOutsideUsError):
-        terrain_dem.validate_conus_wgs84_bbox(
-            Wgs84BoundingBox(north=55.0, east=10.0, south=54.0, west=9.0)
-        )
-
-
-def test_validate_conus_rejects_invalid_lat_order() -> None:
-    with pytest.raises(ValueError, match="north"):
-        terrain_dem.validate_conus_wgs84_bbox(
-            Wgs84BoundingBox(north=39.0, east=-105.0, south=40.0, west=-106.0)
-        )
-
-
 # Bbox that lies inside the WGS84 footprint of ``_fake_dem_epsg5070()`` after
-# reproject/write (synthetic grid, not real terrain).
+# reproject/write (synthetic grid in CONUS Albers, not real terrain).
 _SYNTHETIC_DEM_BBOX = Wgs84BoundingBox(
     north=34.87023579240624,
     east=-108.00226586664824,
@@ -85,77 +49,130 @@ _SYNTHETIC_DEM_BBOX = Wgs84BoundingBox(
 )
 
 
+# ---------------------------------------------------------------------------
+# utm_epsg_from_wgs84
+# ---------------------------------------------------------------------------
+
+
+def test_utm_epsg_from_wgs84_denver() -> None:
+    assert terrain_dem.utm_epsg_from_wgs84(39.74, -104.99) == 32613
+
+
+def test_utm_epsg_from_wgs84_southern_hemisphere() -> None:
+    assert terrain_dem.utm_epsg_from_wgs84(-33.86, 151.2) == 32756
+
+
+# ---------------------------------------------------------------------------
+# download_elevation_raster
+# ---------------------------------------------------------------------------
+
+
+def test_download_elevation_raster_writes_file(tmp_path: Path) -> None:
+    with patch("services.terrain_dem.py3dep.get_dem", return_value=_fake_dem_epsg5070()):
+        terrain_dem.download_elevation_raster(_SYNTHETIC_DEM_BBOX, tmp_path / "out.tif")
+    assert (tmp_path / "out.tif").is_file()
+
+
+def test_download_elevation_raster_service_unavailable_raises(tmp_path: Path) -> None:
+    with patch(
+        "services.terrain_dem.py3dep.get_dem",
+        side_effect=ServiceUnavailableError("down"),
+    ):
+        with pytest.raises(terrain_dem.TerrainDemError, match="unavailable"):
+            terrain_dem.download_elevation_raster(
+                _SYNTHETIC_DEM_BBOX, tmp_path / "out.tif"
+            )
+
+
+def test_download_elevation_raster_generic_exception_raises(tmp_path: Path) -> None:
+    with patch(
+        "services.terrain_dem.py3dep.get_dem",
+        side_effect=RuntimeError("network error"),
+    ):
+        with pytest.raises(terrain_dem.TerrainDemError, match="Failed to download"):
+            terrain_dem.download_elevation_raster(
+                _SYNTHETIC_DEM_BBOX, tmp_path / "out.tif"
+            )
+
+
+# ---------------------------------------------------------------------------
+# ensure_elevation_tile (orchestration: cache, download, metadata, ORM row)
+# ---------------------------------------------------------------------------
+
+
 @patch("services.terrain_dem.py3dep.get_dem", return_value=_fake_dem_epsg5070())
-def test_ensure_elevation_tile_writes_file_and_row(mock_get_dem: object, tmp_path: Path) -> None:
-    session = _memory_session()
-    try:
-        tile = terrain_dem.ensure_elevation_tile(
-            session,
-            lookup=_SYNTHETIC_DEM_BBOX,
-            download=_SYNTHETIC_DEM_BBOX,
-            data_dir=tmp_path,
-        )
-        session.commit()
-
-        assert tile.source == terrain_dem.ELEVATION_SOURCE_USGS_3DEP
-        center_lat = (_SYNTHETIC_DEM_BBOX.north + _SYNTHETIC_DEM_BBOX.south) / 2.0
-        center_lon = (_SYNTHETIC_DEM_BBOX.east + _SYNTHETIC_DEM_BBOX.west) / 2.0
-        assert tile.crs_epsg == terrain_dem.utm_epsg_from_wgs84(center_lat, center_lon)
-        assert tile.file_path.startswith("elevation/")
-        assert tile.file_path.endswith(".tif")
-        assert (tmp_path / tile.file_path).is_file()
-        assert tile.bbox_north > tile.bbox_south
-        assert tile.bbox_east > tile.bbox_west
-        assert mock_get_dem.call_count == 1
-    finally:
-        session.close()
-
-
-@patch("services.terrain_dem.py3dep.get_dem", return_value=_fake_dem_epsg5070())
-def test_ensure_elevation_tile_reuses_cache(mock_get_dem: object, tmp_path: Path) -> None:
-    session = _memory_session()
-    try:
-        first = terrain_dem.ensure_elevation_tile(
-            session,
-            lookup=_SYNTHETIC_DEM_BBOX,
-            download=_SYNTHETIC_DEM_BBOX,
-            data_dir=tmp_path,
-        )
-        session.flush()
-
-        # Lookup must lie strictly inside the file-derived stored bbox (not the
-        # original synthetic label) for find_containing to match.
-        second = terrain_dem.ensure_elevation_tile(
-            session,
-            lookup=Wgs84BoundingBox(
-                north=first.bbox_north - 1e-4,
-                east=first.bbox_east - 1e-4,
-                south=first.bbox_south + 1e-4,
-                west=first.bbox_west + 1e-4,
-            ),
-            download=_SYNTHETIC_DEM_BBOX,
-            data_dir=tmp_path,
-        )
-        session.commit()
-
-        assert second.id == first.id
-        assert mock_get_dem.call_count == 1
-    finally:
-        session.close()
-
-
-def test_terrain_module_wraps_default_data_dir(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_ensure_elevation_tile_writes_file_and_row(
+    mock_get_dem: object, db_session: object, tmp_path: Path
 ) -> None:
-    from config import settings
+    tile = ensure_elevation_tile(
+        db_session,  # type: ignore[arg-type]
+        _SYNTHETIC_DEM_BBOX,
+        download=_SYNTHETIC_DEM_BBOX,
+        data_dir=tmp_path,
+    )
+    db_session.commit()  # type: ignore[union-attr]
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-    session = _memory_session()
-    try:
-        with patch("services.terrain_dem.py3dep.get_dem", return_value=_fake_dem_epsg5070()):
-            tile = ensure_elevation_tile(session, _SYNTHETIC_DEM_BBOX)
-        session.commit()
-        assert (tmp_path / tile.file_path).is_file()
-    finally:
-        session.close()
+    assert tile.source == terrain_dem.ELEVATION_SOURCE_USGS_3DEP
+    center_lat = (_SYNTHETIC_DEM_BBOX.north + _SYNTHETIC_DEM_BBOX.south) / 2.0
+    center_lon = (_SYNTHETIC_DEM_BBOX.east + _SYNTHETIC_DEM_BBOX.west) / 2.0
+    assert tile.crs_epsg == terrain_dem.utm_epsg_from_wgs84(center_lat, center_lon)
+    assert tile.file_path.startswith("elevation/")
+    assert tile.file_path.endswith(".tif")
+    assert (tmp_path / tile.file_path).is_file()
+    assert tile.bbox_north > tile.bbox_south
+    assert tile.bbox_east > tile.bbox_west
+    assert mock_get_dem.call_count == 1  # type: ignore[union-attr]
+
+
+@patch("services.terrain_dem.py3dep.get_dem", return_value=_fake_dem_epsg5070())
+def test_ensure_elevation_tile_reuses_cache(
+    mock_get_dem: object, db_session: object, tmp_path: Path
+) -> None:
+    first = ensure_elevation_tile(
+        db_session,  # type: ignore[arg-type]
+        _SYNTHETIC_DEM_BBOX,
+        download=_SYNTHETIC_DEM_BBOX,
+        data_dir=tmp_path,
+    )
+    db_session.flush()  # type: ignore[union-attr]
+
+    # Lookup slightly inside the file-derived stored bbox so find_containing matches.
+    second = ensure_elevation_tile(
+        db_session,  # type: ignore[arg-type]
+        Wgs84BoundingBox(
+            north=first.bbox_north - 1e-4,
+            east=first.bbox_east - 1e-4,
+            south=first.bbox_south + 1e-4,
+            west=first.bbox_west + 1e-4,
+        ),
+        download=_SYNTHETIC_DEM_BBOX,
+        data_dir=tmp_path,
+    )
+    db_session.commit()  # type: ignore[union-attr]
+
+    assert second.id == first.id
+    assert mock_get_dem.call_count == 1  # type: ignore[union-attr]
+
+
+def test_ensure_elevation_tile_cleanup_on_metadata_failure(
+    db_session: object, tmp_path: Path
+) -> None:
+    """If metadata extraction fails after the file is written, the file is removed."""
+    with (
+        patch("services.terrain_dem.py3dep.get_dem", return_value=_fake_dem_epsg5070()),
+        patch(
+            "services.terrain._read_raster_wgs84_metadata",
+            side_effect=ValueError("bad CRS"),
+        ),
+    ):
+        with pytest.raises(TerrainDemError):
+            ensure_elevation_tile(
+                db_session,  # type: ignore[arg-type]
+                _SYNTHETIC_DEM_BBOX,
+                download=_SYNTHETIC_DEM_BBOX,
+                data_dir=tmp_path,
+            )
+
+    elevation_dir = tmp_path / "elevation"
+    tif_files = list(elevation_dir.glob("*.tif")) if elevation_dir.exists() else []
+    assert tif_files == [], "Orphan .tif file left behind after metadata failure"

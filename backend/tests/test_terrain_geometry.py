@@ -4,7 +4,13 @@ import math
 
 import pytest
 
-from services.terrain_geometry import Wgs84BoundingBox, pad_bbox_fraction, square_bbox_wgs84
+from services.terrain_geometry import (
+    TerrainOutsideUsError,
+    Wgs84BoundingBox,
+    pad_bbox_fraction,
+    square_bbox_wgs84,
+    validate_conus_wgs84_bbox,
+)
 
 
 def test_square_bbox_symmetric_at_equator() -> None:
@@ -99,3 +105,42 @@ def test_pad_25_percent_expands_half_extent_by_quarter() -> None:
     padded = pad_bbox_fraction(core, fraction=0.25)
     assert (padded.north - padded.south) / 2.0 == pytest.approx(half_lat_before * 1.25)
     assert (padded.east - padded.west) / 2.0 == pytest.approx(half_lon_before * 1.25)
+
+
+# ---------------------------------------------------------------------------
+# CONUS validation
+# ---------------------------------------------------------------------------
+
+
+def test_validate_conus_accepts_berthoud_region() -> None:
+    validate_conus_wgs84_bbox(
+        Wgs84BoundingBox(north=39.85, east=-105.65, south=39.65, west=-105.85)
+    )
+
+
+def test_validate_conus_rejects_europe() -> None:
+    with pytest.raises(TerrainOutsideUsError):
+        validate_conus_wgs84_bbox(
+            Wgs84BoundingBox(north=55.0, east=10.0, south=54.0, west=9.0)
+        )
+
+
+def test_validate_conus_rejects_canada() -> None:
+    with pytest.raises(TerrainOutsideUsError):
+        validate_conus_wgs84_bbox(
+            Wgs84BoundingBox(north=52.0, east=-105.0, south=51.0, west=-106.0)
+        )
+
+
+def test_validate_conus_rejects_invalid_lat_order() -> None:
+    with pytest.raises(ValueError, match="north"):
+        validate_conus_wgs84_bbox(
+            Wgs84BoundingBox(north=39.0, east=-105.0, south=40.0, west=-106.0)
+        )
+
+
+def test_validate_conus_rejects_invalid_lon_order() -> None:
+    with pytest.raises(ValueError, match="east"):
+        validate_conus_wgs84_bbox(
+            Wgs84BoundingBox(north=40.0, east=-106.0, south=39.0, west=-105.0)
+        )

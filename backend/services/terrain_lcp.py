@@ -1,24 +1,21 @@
-"""LANDFIRE LCP download and cache for Phase 2 (continental US only).
+"""LANDFIRE LCP download for Phase 2 (continental US only).
 
-Runs WindNinja ``fetch_dem --src lcp`` inside the solver Docker image,
-writes ``{uuid}.lcp`` plus a ``.prj`` sidecar (WindNinja requires it),
-and records a ``LandCoverTile`` row with bbox in WGS84 read from the file.
+Runs WindNinja ``fetch_dem --src lcp`` inside the solver Docker image to fetch
+an LCP file and generate a ``.prj`` sidecar (WindNinja requires it). Cache
+management, metadata extraction, and database interaction are handled by the
+terrain orchestrator in :mod:`services.terrain`.
 """
 
 from __future__ import annotations
 
+import logging
 import shlex
 import subprocess
-import uuid
 from pathlib import Path
 
-import rasterio
-from rasterio.warp import transform_bounds
-from sqlalchemy.orm import Session
-
-from models.orm import LandCoverTile
-from services.terrain_dem import validate_conus_wgs84_bbox
 from services.terrain_geometry import Wgs84BoundingBox
+
+logger = logging.getLogger(__name__)
 
 LAND_COVER_SOURCE_LANDFIRE = "landfire"
 
@@ -27,29 +24,6 @@ _CONTAINER_DATA_ROOT = Path("/data")
 
 class TerrainLcpError(RuntimeError):
     """LCP fetch via Docker / fetch_dem or post-processing failed."""
-
-
-def _read_land_cover_spatial_metadata(
-    lcp_path: Path,
-) -> tuple[float, float, float, float, int]:
-    """Return WGS84 bbox (north, east, south, west) and native EPSG for an LCP on disk."""
-    with rasterio.open(lcp_path) as dataset:
-        if dataset.crs is None:
-            raise TerrainLcpError("Land cover file has no CRS metadata")
-        crs_epsg = dataset.crs.to_epsg()
-        if crs_epsg is None:
-            authority = dataset.crs.to_authority()
-            if authority is not None and authority[0].upper() == "EPSG":
-                crs_epsg = int(authority[1])
-            else:
-                crs_epsg = 5070
-        wgs84_bounds = transform_bounds(
-            dataset.crs,
-            "EPSG:4326",
-            *dataset.bounds,
-        )
-    west_4326, south_4326, east_4326, north_4326 = wgs84_bounds
-    return north_4326, east_4326, south_4326, west_4326, crs_epsg
 
 
 def _run_lcp_docker_pipeline(
@@ -85,6 +59,7 @@ def _run_lcp_docker_pipeline(
         "-lc",
         inner_script,
     ]
+    logger.debug("LCP Docker command: %s", command)
     try:
         subprocess.run(
             command,
@@ -108,85 +83,48 @@ def _run_lcp_docker_pipeline(
         raise TerrainLcpError(f"fetch_dem / gdalsrsinfo failed: {detail}") from exc
 
 
-def ensure_land_cover_tile(
-    session: Session,
+def download_land_cover_raster(
+    download_bbox: Wgs84BoundingBox,
     *,
-    lookup: Wgs84BoundingBox,
-    download: Wgs84BoundingBox,
-    data_dir: Path,
+    host_data_dir: Path,
+    relative_lcp: Path,
     solver_image: str,
-    subprocess_timeout_seconds: int = 3600,
-) -> LandCoverTile:
-    """Return a cached or freshly downloaded LCP tile.
+    timeout_seconds: int,
+) -> None:
+    """Run the Docker pipeline to fetch an LCP file and ``.prj`` sidecar.
 
-    **Lookup** is the user's true WGS84 bbox. **Download** is the extent for ``fetch_dem``
-    (often padded). Stored bbox columns come **only** from the LCP file.
+    ``host_data_dir`` is mounted read-write at ``/data`` in the container.
+    ``relative_lcp`` is the path of the output ``.lcp`` relative to
+    ``host_data_dir`` (e.g. ``Path("land_cover/uuid.lcp")``). The parent
+    directory must already exist.
+
+    Does not create directories, generate IDs, or interact with the database.
 
     Raises:
-        ValueError: Invalid timeout.
-        TerrainOutsideUsError: Download bbox not fully inside CONUS.
-        TerrainLcpError: Docker, ``fetch_dem``, ``gdalsrsinfo``, or metadata read failure.
+        TerrainLcpError: Docker not found, timeout, non-zero exit, or output
+            files missing after a successful run.
     """
-    if subprocess_timeout_seconds <= 0:
-        raise ValueError("subprocess_timeout_seconds must be positive")
-
-    validate_conus_wgs84_bbox(download)
-
-    cached = LandCoverTile.find_containing(
-        session, lookup.north, lookup.south, lookup.east, lookup.west
-    )
-    if cached is not None:
-        return cached
-
-    root = data_dir.resolve()
-    land_cover_dir = root / "land_cover"
-    land_cover_dir.mkdir(parents=True, exist_ok=True)
-
-    tile_id = uuid.uuid4()
-    relative_lcp = Path("land_cover") / f"{tile_id}.lcp"
-    absolute_lcp = root / relative_lcp
+    absolute_lcp = host_data_dir.resolve() / relative_lcp
     absolute_prj = absolute_lcp.with_suffix(".prj")
 
-    try:
-        _run_lcp_docker_pipeline(
-            solver_image=solver_image,
-            host_data_dir=root,
-            relative_lcp=relative_lcp,
-            download=download,
-            subprocess_timeout_seconds=subprocess_timeout_seconds,
-        )
-    except TerrainLcpError:
-        absolute_lcp.unlink(missing_ok=True)
-        absolute_prj.unlink(missing_ok=True)
-        raise
+    logger.info(
+        "Downloading LCP via Docker: bbox=%s solver_image=%s timeout=%ds",
+        download_bbox,
+        solver_image,
+        timeout_seconds,
+    )
+
+    _run_lcp_docker_pipeline(
+        solver_image=solver_image,
+        host_data_dir=host_data_dir,
+        relative_lcp=relative_lcp,
+        download=download_bbox,
+        subprocess_timeout_seconds=timeout_seconds,
+    )
 
     if not absolute_lcp.is_file():
         raise TerrainLcpError(f"Expected LCP file was not created: {absolute_lcp}")
     if not absolute_prj.is_file():
         raise TerrainLcpError(f"Expected .prj sidecar was not created: {absolute_prj}")
 
-    try:
-        file_north, file_east, file_south, file_west, crs_epsg = _read_land_cover_spatial_metadata(
-            absolute_lcp
-        )
-    except Exception as exc:
-        absolute_lcp.unlink(missing_ok=True)
-        absolute_prj.unlink(missing_ok=True)
-        raise TerrainLcpError("Could not read spatial metadata from LCP") from exc
-
-    file_size_bytes = absolute_lcp.stat().st_size + absolute_prj.stat().st_size
-
-    tile = LandCoverTile(
-        id=tile_id,
-        bbox_north=file_north,
-        bbox_south=file_south,
-        bbox_east=file_east,
-        bbox_west=file_west,
-        crs_epsg=crs_epsg,
-        file_path=relative_lcp.as_posix(),
-        source=LAND_COVER_SOURCE_LANDFIRE,
-        file_size_bytes=file_size_bytes,
-    )
-    session.add(tile)
-    session.flush()
-    return tile
+    logger.info("LCP written: path=%s (with .prj sidecar)", absolute_lcp)

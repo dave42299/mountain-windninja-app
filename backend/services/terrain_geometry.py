@@ -1,4 +1,4 @@
-"""Pure geometry helpers for terrain bounding boxes in WGS84.
+"""Pure geometry helpers and CONUS validation for terrain bounding boxes in WGS84.
 
 All coordinates are decimal degrees. North and east are the maximum latitude
 and longitude of the box; south and west are the minimum. This matches the
@@ -9,6 +9,9 @@ Latitude/longitude lengths are approximated with a sphere: one degree of
 latitude is treated as a constant meter length; one degree of longitude
 shrinks with cos(latitude). Good enough for Phase 2 domain sizes (tens of km)
 in the continental US. Not for polar regions or cross-dateline boxes.
+
+CONUS validation lives here because it is pure bbox arithmetic with no I/O,
+matching the character of the rest of this module.
 """
 
 from __future__ import annotations
@@ -126,3 +129,41 @@ def pad_bbox_fraction(bbox: Wgs84BoundingBox, fraction: float = 0.25) -> Wgs84Bo
     new_west = center_lon - new_half_lon
 
     return Wgs84BoundingBox(north=new_north, east=new_east, south=new_south, west=new_west)
+
+
+# ---------------------------------------------------------------------------
+# CONUS validation (Phase 2 continental-US-only restriction)
+# ---------------------------------------------------------------------------
+
+# Approximate CONUS envelope in WGS84. Phase 2 excludes Alaska, Hawaii, and non-US.
+_CONUS_NORTH = 49.6
+_CONUS_SOUTH = 24.0
+_CONUS_EAST = -66.0
+_CONUS_WEST = -125.05
+
+
+class TerrainOutsideUsError(ValueError):
+    """The requested extent is outside the Phase 2 continental US service area."""
+
+
+def validate_conus_wgs84_bbox(bbox: Wgs84BoundingBox) -> None:
+    """Raise ``TerrainOutsideUsError`` if ``bbox`` is not fully inside the CONUS envelope.
+
+    Also raises ``ValueError`` if the bbox is geometrically invalid (``north <= south``
+    or ``east <= west``).
+    """
+    if bbox.north <= bbox.south:
+        raise ValueError("north must be greater than south")
+    if bbox.east <= bbox.west:
+        raise ValueError("east must be greater than west")
+    if (
+        bbox.north > _CONUS_NORTH
+        or bbox.south < _CONUS_SOUTH
+        or bbox.east > _CONUS_EAST
+        or bbox.west < _CONUS_WEST
+    ):
+        raise TerrainOutsideUsError(
+            "Forecast extent must lie fully inside the continental United States "
+            f"(WGS84 envelope south={_CONUS_SOUTH}..north={_CONUS_NORTH}, "
+            f"west={_CONUS_WEST}..east={_CONUS_EAST})."
+        )

@@ -1,9 +1,4 @@
-"""Enums shared across ORM models and Pydantic schemas.
-
-In a separate module so that importing enums does not pull in the ORM layer,
-database engine, or any other heavyweight dependencies. This allows Pydantic
-schemas, CLI tools, and tests to use the enums without a live database.
-"""
+"""Enums shared across ORM models and Pydantic schemas."""
 
 import enum
 

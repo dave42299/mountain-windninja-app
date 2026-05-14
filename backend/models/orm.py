@@ -88,8 +88,8 @@ class ElevationTile(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_new_uuid)
 
     # Bounding box in WGS84 decimal degrees for consistent spatial lookups,
-    # even though the file itself is in UTM. Values are taken from the written
-    # file (actual cached extent), not merged with the download order bbox.
+    # even though the file itself is in UTM. Populated by reading the
+    # downloaded file's extent and reprojecting corners to EPSG:4326.
     # Individually indexed for bitmap AND scans on containment queries.
     bbox_north: Mapped[float] = mapped_column(Float, nullable=False, index=True)
     bbox_south: Mapped[float] = mapped_column(Float, nullable=False, index=True)
