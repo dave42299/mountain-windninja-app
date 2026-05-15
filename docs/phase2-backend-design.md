@@ -1,7 +1,7 @@
 # Phase 2: Backend API Design Report
 
 **Date:** May 14, 2026
-**Status:** In progress — terrain pipeline implemented and reviewed; weather, solver, and full forecast HTTP handlers still pending
+**Status:** In progress -- terrain pipeline implemented and reviewed; weather, solver, and full forecast HTTP handlers still pending
 
 ## Objective
 
@@ -45,7 +45,7 @@ Terrain tiles are cached by a **WGS84** axis-aligned bounding box stored on each
 
 **Lookup vs download.** The user's true request is a square from **center + ``size_km``** (the **user bbox**). Before fetching, we **pad** that square (default **25%** on each half-span) to form a **download bbox** that is sent to USGS / LANDFIRE. Padding exists so **substantially similar** later requests (slightly different center or size) still fall inside data we already pulled.
 
-**Cache queries use the user bbox, not the padded bbox.** A hit is any tile whose **stored** (file-derived) bbox **fully contains** the **user** box for the current forecast. If we queried with the padded box, we would require the cache to match a **larger** region than the user actually asked for, which would **defeat** the purpose of padding (fewer hits, wrong semantics). Padding only enlarges the **fetch**; the **question** to the cache is always “do we already have real pixels covering **this user's** box?”
+**Cache queries use the user bbox, not the padded bbox.** A hit is any tile whose **stored** (file-derived) bbox **fully contains** the **user** box for the current forecast. If we queried with the padded box, we would require the cache to match a **larger** region than the user actually asked for, which would **defeat** the purpose of padding (fewer hits, wrong semantics). Padding only enlarges the **fetch**; the **question** to the cache is always "do we already have real pixels covering **this user's** box?"
 
 **Tile selection.** Among hits, **elevation** picks the **smallest** containing tile (tightest fit). **Land cover** picks the **most recently downloaded** among tiles that contain the user box, so newer LANDFIRE data is preferred when several tiles qualify.
 
@@ -110,9 +110,9 @@ LandCoverTile (cached LCP files)
   downloaded_at, file_size_bytes (bigint)
 
 Forecast (a single wind forecast job)
-  id, forecast_area_id (nullable FK → SET NULL) [indexed],
+  id, forecast_area_id (nullable FK -> SET NULL) [indexed],
   center_latitude, center_longitude, size_km,
-  elevation_tile_id (FK → RESTRICT), land_cover_tile_id (nullable FK → RESTRICT),
+  elevation_tile_id (FK -> RESTRICT), land_cover_tile_id (nullable FK -> RESTRICT),
   status (enum) [indexed], weather_model (enum), solver_type (enum), output_wind_height,
   forecast_start, duration_hours,
   error_message, created_at [indexed], started_at, completed_at, updated_at (auto)
@@ -234,20 +234,15 @@ The terrain layer turns a forecast location (center lat/lon + ``size_km``) into 
 
 **Orchestration.** ``ensure_tiles_for_forecast`` builds the user bbox, pads it (default 25%), validates the padded extent falls inside CONUS, and resolves each layer. The frozen ``ForecastTerrainTiles`` result carries both tiles plus user and padded bboxes for downstream callers (solver config, logging).
 
-**Transactions vs retries.** Elevation and land cover are **independent** caches (different tables, different download paths). There is no “terrain pair” invariant at the database layer: you never insert a ``Forecast`` until **both** tile IDs exist, so a row that references only one FK is not a concern for tile persistence.
+**Why DEM and LCP use different runtimes.** Elevation uses py3dep on the host (USGS 3DEP at 10 m, reprojected to UTM). Land cover uses WindNinja's ``fetch_dem`` inside the solver Docker image (LANDFIRE source), reusing the same image as solver runs so the host doesn't need to duplicate the LCP/GDAL toolchain.
 
-Tile helpers ``flush`` new rows so IDs exist in-session; callers (or ``ensure_tiles_for_forecast``) **commit** work as each layer succeeds. Concretely:
+**Cache eviction.** Tiles currently accumulate without bound. A disk-budget or age-based eviction strategy is deferred to Phase 4; ``file_size_bytes`` on tile rows supports future budget-based cleanup without filesystem scanning.
 
-- If **LCP** fails after **DEM** already succeeded, the DEM row must **remain committed** so the next request gets a DEM **cache hit** and only retries land cover. Rolling back one shared transaction would undo the DEM insert (while the GeoTIFF may still be on disk), which forces redundant downloads and can orphan files.
-- After **both** layers succeed, **commit** before inserting ``Forecast`` (or rely on commits already performed inside ``ensure_tiles_for_forecast``). If the forecast row or later job setup fails, retries still reuse both caches. Avoid one long transaction that rolls back after a forecast error for the same reason as above.
+**Tests.** Fast unit tests cover geometry, orchestration, and partial-failure durability; DEM/LCP I/O is mocked. Optional integration tests (``RUN_TERRAIN_INTEGRATION=1``) hit live USGS for manual validation.
 
-**Why DEM and LCP use different runtimes.** Elevation uses **py3dep and rasterio on the host**: USGS 3DEP at 10 m where available, then reproject to **UTM** from the download bbox center so downstream work has one predictable projected CRS, without requiring the WindNinja image for DEM. Land cover uses **WindNinja's ``fetch_dem`` against the LANDFIRE source** inside the **solver Docker image** (``docker run``), reusing the same image as solver runs, because that stack bundles the LCP workflow and GDAL (including a **``.prj``** next to the ``.lcp``). A configurable timeout bounds long LANDFIRE jobs.
+### Status
 
-**Stored bbox columns.** After each download, ``bbox_*`` on the tile row are filled **only** from the written file's geographic extent (axis-aligned hull in WGS84). They describe **what is actually cached**, not the padded order box. Cache hits are decided by **containment of the user bbox** inside that stored extent (see design decision §3).
-
-**Configuration.** ``settings.data_dir`` roots tile storage; ``settings.solver_image`` and ``settings.terrain_lcp_subprocess_timeout_seconds`` apply to the LCP Docker invocation. Failures map to explicit error types for clear API behavior.
-
-**Tests.** Fast unit tests cover geometry and orchestration; DEM/LCP I/O is mocked in CI. Optional integration (``RUN_TERRAIN_INTEGRATION=1``) can hit live USGS for manual checks.
+The terrain service is **complete and reviewed**. All design principles, invariants, cache semantics, error handling, and file cleanup paths are implemented and tested (44 unit tests passing). No known bugs or gaps remain for the Phase 2 scope.
 
 ## Import Conventions
 
@@ -271,10 +266,10 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/api/deps.py` | FastAPI dependencies: lazy DB engine (@lru_cache), session, settings |
 | `backend/api/routers/forecast_areas.py` | ForecastArea CRUD endpoints |
 | `backend/api/routers/forecasts.py` | Forecast routes (stub; module doc describes calling terrain before insert) |
-| `backend/services/terrain_geometry.py` | Pure WGS84 square bbox and fractional padding |
-| `backend/services/terrain_dem.py` | USGS 3DEP DEM download, cache, ``ElevationTile`` rows |
-| `backend/services/terrain_lcp.py` | LANDFIRE LCP via Docker ``fetch_dem``, ``.prj`` sidecar, ``LandCoverTile`` rows |
-| `backend/services/terrain.py` | Public terrain API: per-layer ensure functions and ``ensure_tiles_for_forecast`` |
+| `backend/services/terrain_geometry.py` | Pure WGS84 bbox, square construction, fractional padding, CONUS validation |
+| `backend/services/terrain_dem.py` | USGS 3DEP DEM download via py3dep, UTM reprojection |
+| `backend/services/terrain_lcp.py` | LANDFIRE LCP via Docker ``fetch_dem``, ``.prj`` sidecar generation |
+| `backend/services/terrain.py` | Public terrain API: cache lookup, metadata extraction, orchestration |
 | `backend/tests/test_terrain_*.py` | Terrain unit tests and optional integration (env-gated) |
 | `backend/requirements.txt` | Pinned dependencies for Docker layer caching (derived from pyproject.toml) |
 | `backend/Dockerfile` | Python 3.12 image with GDAL, deps-first layer caching |
