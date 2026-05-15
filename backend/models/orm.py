@@ -44,7 +44,7 @@ Design decisions documented here:
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text, Uuid, select
+from sqlalchemy import BigInteger, DateTime, Enum as SaEnum, Float, ForeignKey, Integer, String, Text, Uuid, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from .database import Base
@@ -238,8 +238,9 @@ class Forecast(Base):
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default=ForecastStatus.queued, index=True
     )
-    weather_model: Mapped[str] = mapped_column(
-        String(10), nullable=False, default=WeatherModel.hrrr
+    weather_model: Mapped[WeatherModel] = mapped_column(
+        SaEnum(WeatherModel, native_enum=False, length=10, create_constraint=False),
+        nullable=False, default=WeatherModel.hrrr,
     )
 
     solver_type: Mapped[str] = mapped_column(

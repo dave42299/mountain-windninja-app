@@ -1,7 +1,7 @@
 # Phase 2: Backend API Design Report
 
-**Date:** May 14, 2026
-**Status:** In progress -- terrain pipeline implemented and reviewed; weather, solver, and full forecast HTTP handlers still pending
+**Date:** May 15, 2026
+**Status:** In progress -- terrain and weather pipelines implemented and reviewed; solver execution and end-to-end integration still pending
 
 ## Objective
 
@@ -244,6 +244,175 @@ The terrain layer turns a forecast location (center lat/lon + ``size_km``) into 
 
 The terrain service is **complete and reviewed**. All design principles, invariants, cache semantics, error handling, and file cleanup paths are implemented and tested (44 unit tests passing). No known bugs or gaps remain for the Phase 2 scope.
 
+## Weather service
+
+### Design decisions
+
+- **griddedInitialization over wxModelInitialization.** Phase 1 validation showed WindNinja's built-in NOMADS downloader is fragile (empty-body responses from the NOMADS filter CGI, silent failures). The app downloads HRRR GRIB2 from AWS S3 via Herbie, converts U/V to speed/direction ASCII grids, and feeds them to WindNinja via ``griddedInitialization``. This decouples weather download from solver execution, enabling independent retries and future GRIB caching.
+
+- **rasterio + GDAL GRIB driver for GRIB2 reading.** No additional dependencies (cfgrib/eccodes) needed; rasterio's bundled GDAL 3.12 reads GRIB2 natively. Band identification uses ``GRIB_ELEMENT`` tags (``UGRD``/``VGRD``).
+
+- **Per-timestep solver execution.** WindNinja's ``griddedInitialization`` accepts a single timestep per config file. A 12-hour forecast requires 12 solver invocations. Phase 4 will parallelize these; Phase 2 runs them sequentially.
+
+- **No weather database table.** Weather grids are ephemeral per-forecast artifacts stored under ``data/weather/{forecast_id}/``. Raw GRIB2 files are cached by Herbie in ``~/data/hrrr/`` and reused across forecasts automatically.
+
+### Design principles (carried forward from terrain service)
+
+- **Three-stage validation.** Time-based heuristics catch impossible requests (before archive start, too far in future) without network calls. Herbie inventory probes (S3 HEAD) confirm each cycle exists before committing to downloads. WindNinja's own error handling is the final backstop.
+
+- **Typed errors for each failure mode.** ``WeatherTimeRangeError`` (invalid time range, maps to HTTP 422) and ``WeatherDownloadError`` (S3/GRIB/conversion failure, maps to HTTP 502) let the API layer choose appropriate responses.
+
+- **No orphans on failure.** If any timestep fails, the entire ``weather/{forecast_id}/`` directory is removed via ``shutil.rmtree``.
+
+- **Single public surface, layered internals.** ``weather.py`` is the only module other code imports. ``weather_models.py`` (pure datetime logic) and ``weather_hrrr.py`` (GRIB I/O + conversion) are internal sub-modules.
+
+### Key invariants
+
+- Forcing grids are **DEM size + 2** pixels in each dimension (one extra pixel on each side), matching the reference ``forcing_from_grib.py`` alignment contract.
+- Speed is in **m/s**, direction is **meteorological convention** (degrees clockwise from north, direction wind blows FROM).
+- NODATA is **-9999** for both grids.
+- ``.prj`` sidecars use ESRI WKT1 format.
+- ``analysis_time + forecast_hour == valid_time`` for every ``HrrrCycle``.
+
+### HRRR cycle resolution explained
+
+HRRR (High-Resolution Rapid Refresh) is a weather model that NOAA runs every hour. Each run is called a "cycle" and is identified by the hour it was initialized (e.g., the 12 UTC cycle). Each cycle produces forecast data for a number of hours into the future. The cycle resolution framework figures out, for every hour the user wants wind data, which specific HRRR cycle and forecast hour to pull from.
+
+**Key concepts.** Every HRRR data point has two times: the *analysis time* (when the model run started) and the *forecast hour* (how many hours ahead of the analysis the data represents). A forecast hour of 0 (``fxx=0``) is the analysis itself -- the model's best estimate of conditions at the time it was initialized. ``fxx=2`` means the model's prediction 2 hours after initialization.
+
+HRRR cycles have different forecast horizons. Standard cycles (most hours) produce forecasts up to 18 hours ahead. Extended cycles (00, 06, 12, and 18 UTC) produce forecasts up to 48 hours ahead. Data appears on AWS S3 roughly 1-2 hours after the cycle runs.
+
+**How resolution works for past times.** For any timestep that has already happened, the resolver uses the analysis (``fxx=0``) from that hour's own cycle. This gives the best-available data because an analysis assimilates actual observations and is more accurate than any forecast.
+
+**How resolution works for future times.** For timesteps that haven't happened yet, the resolver starts from the most recent cycle available on S3 and computes how many hours ahead the target time is. If that falls within the cycle's forecast horizon, it uses that cycle. If not, it walks backward through earlier cycles until it finds one with a long enough horizon.
+
+**Worked examples.** All examples assume the current time is May 10, 2026, 14:00 UTC. The S3 publication lag is 2 hours, so the latest cycle available on S3 is 12:00 UTC.
+
+**Example 1: 6-hour past window (pastcast).** User requests ``forecast_start=06:00, duration_hours=6``.
+
+```
+Timestep  Valid Time  Analysis  fxx  Reasoning
+-------   ----------  --------  ---  ---------
+0         06:00       06:00     0    Past: use 06:00 cycle analysis
+1         07:00       07:00     0    Past: use 07:00 cycle analysis
+2         08:00       08:00     0    Past: use 08:00 cycle analysis
+3         09:00       09:00     0    Past: use 09:00 cycle analysis
+4         10:00       10:00     0    Past: use 10:00 cycle analysis
+5         11:00       11:00     0    Past: use 11:00 cycle analysis
+```
+
+Each hour uses its own cycle's analysis -- the most accurate data available for that hour.
+
+**Example 2: 6-hour future window (forecast).** User requests ``forecast_start=16:00, duration_hours=6``.
+
+```
+Timestep  Valid Time  Analysis  fxx  Reasoning
+-------   ----------  --------  ---  ---------
+0         16:00       12:00     4    Future: latest cycle (12Z) + 4h
+1         17:00       12:00     5    Future: latest cycle (12Z) + 5h
+2         18:00       12:00     6    Future: latest cycle (12Z) + 6h
+3         19:00       12:00     7    Future: latest cycle (12Z) + 7h
+4         20:00       12:00     8    Future: latest cycle (12Z) + 8h
+5         21:00       12:00     9    Future: latest cycle (12Z) + 9h
+```
+
+All timesteps use the 12 UTC cycle because it is the latest available and its 18-hour horizon covers the full window.
+
+**Example 3: Mixed window (past + future).** User requests ``forecast_start=11:00, duration_hours=6``.
+
+```
+Timestep  Valid Time  Analysis  fxx  Reasoning
+-------   ----------  --------  ---  ---------
+0         11:00       11:00     0    Past: use 11:00 cycle analysis
+1         12:00       12:00     0    Past/current: use 12:00 cycle analysis
+2         13:00       12:00     1    Future: latest cycle (12Z) + 1h
+3         14:00       12:00     2    Future: latest cycle (12Z) + 2h
+4         15:00       12:00     3    Future: latest cycle (12Z) + 3h
+5         16:00       12:00     4    Future: latest cycle (12Z) + 4h
+```
+
+The window spans the boundary between past and future. The first two hours use their own analyses; the rest use forecasts from the 12 UTC cycle.
+
+**Example 4: Far-future fallback.** User requests ``forecast_start=08:00 May 11`` (tomorrow), ``duration_hours=3``. That is 18+ hours from now.
+
+```
+Timestep  Valid Time     Analysis  fxx  Reasoning
+-------   ----------     --------  ---  ---------
+0         May 11 08:00   12:00     20   12Z is extended (48h), 20h ahead
+1         May 11 09:00   12:00     21   12Z is extended (48h), 21h ahead
+2         May 11 10:00   12:00     22   12Z is extended (48h), 22h ahead
+```
+
+The standard 18-hour horizon of the 12 UTC cycle cannot reach May 11 08:00 (20 hours away). But 12 UTC is an extended cycle (one of 00/06/12/18) with a 48-hour horizon, so it can. If the latest cycle had been 13 UTC (standard, 18h max), the resolver would walk backward to 12 UTC to find the first cycle with enough range.
+
+### Forecast pipeline call stack
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant API as POST /forecasts
+    participant Terrain as terrain.py
+    participant DB as PostgreSQL
+    participant BG as Background Worker
+    participant WM as weather_models.py
+    participant WH as weather_hrrr.py
+    participant Herbie as Herbie / AWS S3
+
+    User->>API: ForecastCreate (lat/lon, time, hours)
+    API->>Terrain: ensure_tiles_for_forecast()
+    Terrain-->>API: ForecastTerrainTiles (DEM + LCP)
+    API->>DB: INSERT Forecast (status=queued)
+    API-->>User: 201 Created {forecast_id}
+
+    Note over BG: Background task starts
+
+    BG->>DB: status -> fetching_weather
+    BG->>WM: validate_hrrr_time_range()
+    WM-->>BG: OK (or WeatherTimeRangeError)
+    BG->>WM: resolve_hrrr_cycles()
+    WM-->>BG: list[HrrrCycle]
+
+    BG->>WH: check_hrrr_availability(cycles)
+    loop Each cycle
+        WH->>Herbie: inventory(searchString) [S3 HEAD]
+        Herbie-->>WH: index entries found
+    end
+    WH-->>BG: all available
+
+    loop Each hourly timestep
+        BG->>WH: process_timestep(cycle, dem_path, output_dir)
+        WH->>Herbie: download(searchString) [S3 byte-range]
+        Herbie-->>WH: grib2_path
+        WH->>WH: read_dem_grid_spec(dem_path)
+        WH->>WH: extract_and_warp_wind(grib, dem_spec)
+        Note over WH: rasterio.warp.reproject<br/>Lambert Conformal -> UTM<br/>padded to DEM+2 pixels
+        WH->>WH: uv_to_speed_direction()
+        Note over WH: np.hypot + np.arctan2
+        WH->>WH: write_ascii_grid() x2
+        Note over WH: speed.asc + direction.asc<br/>+ .prj sidecars
+        WH-->>BG: (speed_path, direction_path)
+    end
+
+    BG->>BG: write metadata.json
+    BG->>DB: status -> running_solver
+    Note over BG: Solver not yet implemented
+    BG->>DB: status -> completed
+```
+
+### Implementation summary
+
+The weather layer turns a forecast time window + DEM tile into per-timestep speed/direction ASCII grids ready for WindNinja ``griddedInitialization``.
+
+**Cycle resolution.** ``resolve_hrrr_cycles`` maps each hourly timestep to an HRRR cycle. Past times use ``fxx=0`` (analysis) for each hour's own cycle. Future times use the latest available cycle with the appropriate forecast hour offset, falling back to extended cycles (00/06/12/18 UTC, 48h horizon) when standard 18h cycles can't reach the target time.
+
+**GRIB processing pipeline.** For each timestep: Herbie downloads UGRD+VGRD at 10m above ground (byte-range S3 request, ~2-5 MB per timestep). rasterio reads the GRIB2, then ``rasterio.warp.reproject`` warps both bands from HRRR's native Lambert Conformal Conic to the DEM's UTM CRS at the padded extent. Numpy vectorized math converts U/V to speed/direction. The result is written as ESRI ASCII Grid with ``.prj`` sidecar.
+
+**Pipeline wiring.** ``POST /forecasts`` resolves terrain synchronously (tiles may be cached), inserts the Forecast row, then launches a background task. The background worker transitions status through ``fetching_weather`` → ``running_solver`` → ``completed``/``failed``, each status update committed independently.
+
+### Status
+
+The weather service is **complete and reviewed**. All design principles, validation, GRIB processing, grid alignment, error handling, and cleanup paths are implemented and tested (51 unit tests passing, 95 total). The forecast endpoint (``POST/GET /forecasts``) is implemented with terrain + weather + background worker. Solver execution (Phase 2 Step 5) is the remaining gap.
+
 ## Import Conventions
 
 Within a package, use relative imports (`from .database import Base`). Between packages, use absolute imports from the project root (`from models.database import build_engine`). Enforced via `.cursor/rules/import-conventions.mdc`.
@@ -265,12 +434,18 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/api/main.py` | FastAPI app with lifespan, configurable CORS, router registration |
 | `backend/api/deps.py` | FastAPI dependencies: lazy DB engine (@lru_cache), session, settings |
 | `backend/api/routers/forecast_areas.py` | ForecastArea CRUD endpoints |
-| `backend/api/routers/forecasts.py` | Forecast routes (stub; module doc describes calling terrain before insert) |
+| `backend/api/routers/forecasts.py` | POST/GET /forecasts with terrain resolution, background worker, weather pipeline |
 | `backend/services/terrain_geometry.py` | Pure WGS84 bbox, square construction, fractional padding, CONUS validation |
 | `backend/services/terrain_dem.py` | USGS 3DEP DEM download via py3dep, UTM reprojection |
 | `backend/services/terrain_lcp.py` | LANDFIRE LCP via Docker ``fetch_dem``, ``.prj`` sidecar generation |
 | `backend/services/terrain.py` | Public terrain API: cache lookup, metadata extraction, orchestration |
+| `backend/services/weather_models.py` | HRRR cycle resolution, time-range validation heuristics (pure datetime) |
+| `backend/services/weather_hrrr.py` | HRRR GRIB2 download via Herbie, rasterio extraction, U/V-to-speed/dir, ASCII grid writing |
+| `backend/services/weather.py` | Public weather API: validation, orchestration, metadata recording |
 | `backend/tests/test_terrain_*.py` | Terrain unit tests and optional integration (env-gated) |
+| `backend/tests/test_weather_models.py` | HRRR cycle resolution and time validation tests (21 tests) |
+| `backend/tests/test_weather_hrrr.py` | GRIB processing, U/V conversion, ASCII grid writing tests (21 tests) |
+| `backend/tests/test_weather.py` | Weather orchestrator tests: happy path, NBM rejection, cleanup (9 tests) |
 | `backend/requirements.txt` | Pinned dependencies for Docker layer caching (derived from pyproject.toml) |
 | `backend/Dockerfile` | Python 3.12 image with GDAL, deps-first layer caching |
 | `docker-compose.yml` | Postgres-only (backend runs natively) |
@@ -280,8 +455,6 @@ The FastAPI lifespan handler creates the data directory structure on first start
 
 ## Remaining Work
 
-- Wire ``POST /forecasts`` to call ``ensure_tiles_for_forecast`` before inserting ``Forecast`` (see ``backend/api/routers/forecasts.py`` module doc)
-- Implement weather service (Herbie for HRRR, GRIB-to-ASCII conversion)
 - Implement solver service (WindNinja config generation, Docker execution)
-- Implement remaining API endpoint handlers and background job lifecycle
+- Implement output file serving endpoints (``GET /forecasts/{id}/output``)
 - End-to-end integration test: create forecast -> poll -> retrieve output

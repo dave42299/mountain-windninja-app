@@ -21,12 +21,12 @@ def _get_engine() -> Engine:
 
 
 @lru_cache
-def _get_session_factory() -> sessionmaker[Session]:
+def get_session_factory() -> sessionmaker[Session]:
     return build_session_factory(_get_engine())
 
 
 def get_db() -> Generator[Session, None, None]:
-    db = _get_session_factory()()
+    db = get_session_factory()()
     try:
         yield db
     finally:
