@@ -8,10 +8,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from config import Settings
 from models.database import Base
 from models.enums import ForecastStatus, SolverType, WeatherModel
 from models.orm import ElevationTile, Forecast, ForecastArea, LandCoverTile
@@ -440,3 +441,279 @@ class TestStatusHelpers:
         assert forecast.status == ForecastStatus.failed
         assert forecast.error_message == "download failed"
         assert forecast.completed_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers: _get_forecast_or_404, _require_completed_forecast,
+#                 _resolve_output_dir
+# ---------------------------------------------------------------------------
+
+
+class TestGetForecastOr404:
+    def test_returns_forecast(self, db_session: Session) -> None:
+        from api.routers.forecasts import _get_forecast_or_404
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(db_session, elev, lcp)
+        db_session.commit()
+
+        result = _get_forecast_or_404(forecast.id, db_session)
+        assert result.id == forecast.id
+
+    def test_raises_404_for_missing(self, db_session: Session) -> None:
+        from api.routers.forecasts import _get_forecast_or_404
+
+        with pytest.raises(HTTPException) as exc_info:
+            _get_forecast_or_404(uuid.uuid4(), db_session)
+        assert exc_info.value.status_code == 404
+
+
+class TestRequireCompletedForecast:
+    def test_passes_for_completed(self, db_session: Session) -> None:
+        from api.routers.forecasts import _require_completed_forecast
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.completed,
+        )
+        db_session.commit()
+        _require_completed_forecast(forecast)
+
+    def test_raises_409_for_running(self, db_session: Session) -> None:
+        from api.routers.forecasts import _require_completed_forecast
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.running_solver,
+        )
+        db_session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            _require_completed_forecast(forecast)
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["status"] == ForecastStatus.running_solver
+
+    def test_raises_409_for_failed(self, db_session: Session) -> None:
+        from api.routers.forecasts import _require_completed_forecast
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.failed,
+        )
+        db_session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            _require_completed_forecast(forecast)
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["status"] == ForecastStatus.failed
+
+
+class TestResolveOutputDir:
+    def test_returns_existing_dir(self, tmp_path: Path) -> None:
+        from api.routers.forecasts import _resolve_output_dir
+
+        forecast_id = uuid.uuid4()
+        output_dir = tmp_path / "output" / str(forecast_id)
+        output_dir.mkdir(parents=True)
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        result = _resolve_output_dir(forecast_id, test_settings)
+        assert result == output_dir
+
+    def test_raises_404_for_missing_dir(self, tmp_path: Path) -> None:
+        from api.routers.forecasts import _resolve_output_dir
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        with pytest.raises(HTTPException) as exc_info:
+            _resolve_output_dir(uuid.uuid4(), test_settings)
+        assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# list_forecast_output
+# ---------------------------------------------------------------------------
+
+
+class TestListForecastOutput:
+    def test_happy_path(self, db_session: Session, tmp_path: Path) -> None:
+        from api.routers.forecasts import list_forecast_output
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.completed,
+        )
+        db_session.commit()
+
+        output_dir = tmp_path / "output" / str(forecast.id)
+        output_dir.mkdir(parents=True)
+        (output_dir / "speed.asc").write_text("test speed data")
+        (output_dir / "direction.asc").write_text("test direction data")
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        response = list_forecast_output(
+            forecast_id=forecast.id, db=db_session, settings=test_settings,
+        )
+        assert response.forecast_id == forecast.id
+        assert len(response.files) == 2
+        filenames = {f.filename for f in response.files}
+        assert filenames == {"speed.asc", "direction.asc"}
+        for file_info in response.files:
+            assert file_info.size_bytes > 0
+
+    def test_forecast_not_found(self, db_session: Session, tmp_path: Path) -> None:
+        from api.routers.forecasts import list_forecast_output
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        with pytest.raises(HTTPException) as exc_info:
+            list_forecast_output(
+                forecast_id=uuid.uuid4(), db=db_session, settings=test_settings,
+            )
+        assert exc_info.value.status_code == 404
+
+    def test_forecast_not_completed(self, db_session: Session, tmp_path: Path) -> None:
+        from api.routers.forecasts import list_forecast_output
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.queued,
+        )
+        db_session.commit()
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        with pytest.raises(HTTPException) as exc_info:
+            list_forecast_output(
+                forecast_id=forecast.id, db=db_session, settings=test_settings,
+            )
+        assert exc_info.value.status_code == 409
+
+    def test_missing_directory(self, db_session: Session, tmp_path: Path) -> None:
+        from api.routers.forecasts import list_forecast_output
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.completed,
+        )
+        db_session.commit()
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        with pytest.raises(HTTPException) as exc_info:
+            list_forecast_output(
+                forecast_id=forecast.id, db=db_session, settings=test_settings,
+            )
+        assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# download_forecast_output
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadForecastOutput:
+    def test_happy_path(self, db_session: Session, tmp_path: Path) -> None:
+        from api.routers.forecasts import download_forecast_output
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.completed,
+        )
+        db_session.commit()
+
+        output_dir = tmp_path / "output" / str(forecast.id)
+        output_dir.mkdir(parents=True)
+        (output_dir / "speed.asc").write_text("test speed data")
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        response = download_forecast_output(
+            forecast_id=forecast.id,
+            filename="speed.asc",
+            db=db_session,
+            settings=test_settings,
+        )
+        assert Path(response.path) == output_dir / "speed.asc"
+        assert response.media_type == "text/plain"
+
+    def test_path_traversal_rejected(
+        self, db_session: Session, tmp_path: Path,
+    ) -> None:
+        from api.routers.forecasts import download_forecast_output
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.completed,
+        )
+        db_session.commit()
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        with pytest.raises(HTTPException) as exc_info:
+            download_forecast_output(
+                forecast_id=forecast.id,
+                filename="../../../etc/passwd",
+                db=db_session,
+                settings=test_settings,
+            )
+        assert exc_info.value.status_code == 400
+
+    def test_slash_in_filename_rejected(
+        self, db_session: Session, tmp_path: Path,
+    ) -> None:
+        from api.routers.forecasts import download_forecast_output
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.completed,
+        )
+        db_session.commit()
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        with pytest.raises(HTTPException) as exc_info:
+            download_forecast_output(
+                forecast_id=forecast.id,
+                filename="sub/file.asc",
+                db=db_session,
+                settings=test_settings,
+            )
+        assert exc_info.value.status_code == 400
+
+    def test_file_not_found(self, db_session: Session, tmp_path: Path) -> None:
+        from api.routers.forecasts import download_forecast_output
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.completed,
+        )
+        db_session.commit()
+
+        output_dir = tmp_path / "output" / str(forecast.id)
+        output_dir.mkdir(parents=True)
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        with pytest.raises(HTTPException) as exc_info:
+            download_forecast_output(
+                forecast_id=forecast.id,
+                filename="nonexistent.asc",
+                db=db_session,
+                settings=test_settings,
+            )
+        assert exc_info.value.status_code == 404
+
+    def test_json_media_type(self, db_session: Session, tmp_path: Path) -> None:
+        from api.routers.forecasts import download_forecast_output
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(
+            db_session, elev, lcp, status=ForecastStatus.completed,
+        )
+        db_session.commit()
+
+        output_dir = tmp_path / "output" / str(forecast.id)
+        output_dir.mkdir(parents=True)
+        (output_dir / "metadata.json").write_text('{"key": "value"}')
+
+        test_settings = Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
+        response = download_forecast_output(
+            forecast_id=forecast.id,
+            filename="metadata.json",
+            db=db_session,
+            settings=test_settings,
+        )
+        assert response.media_type == "application/json"

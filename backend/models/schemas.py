@@ -117,3 +117,18 @@ class ForecastResponse(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Forecast output schemas
+# ---------------------------------------------------------------------------
+
+
+class OutputFileInfo(BaseModel):
+    filename: str
+    size_bytes: int
+
+
+class ForecastOutputResponse(BaseModel):
+    forecast_id: uuid.UUID
+    files: list[OutputFileInfo]

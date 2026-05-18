@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -26,7 +28,12 @@ from api.deps import get_db, get_session_factory, get_settings
 from config import Settings
 from models.enums import ForecastStatus
 from models.orm import Forecast, ForecastArea
-from models.schemas import ForecastCreate, ForecastResponse
+from models.schemas import (
+    ForecastCreate,
+    ForecastOutputResponse,
+    ForecastResponse,
+    OutputFileInfo,
+)
 from services.terrain import (
     TerrainDemError,
     TerrainLcpError,
@@ -48,6 +55,62 @@ from services.weather import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/forecasts", tags=["forecasts"])
+
+_MEDIA_TYPES: dict[str, str] = {
+    ".asc": "text/plain",
+    ".cfg": "text/plain",
+    ".prj": "text/plain",
+    ".json": "application/json",
+}
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers (used by multiple endpoints)
+# ---------------------------------------------------------------------------
+
+
+def _get_forecast_or_404(forecast_id: uuid.UUID, db: Session) -> Forecast:
+    """Look up a forecast by ID. Raises HTTP 404 if not found."""
+    forecast = db.get(Forecast, forecast_id)
+    if forecast is None:
+        raise HTTPException(status_code=404, detail="Forecast not found")
+    return forecast
+
+
+def _require_completed_forecast(forecast: Forecast) -> None:
+    """Raise HTTP 409 if the forecast has not reached ``completed`` status.
+
+    The response body includes the current status so the frontend can decide
+    whether to keep polling (in-progress statuses) or show an error (failed).
+    """
+    if forecast.status != ForecastStatus.completed:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Forecast output is not available",
+                "forecast_id": str(forecast.id),
+                "status": forecast.status,
+            },
+        )
+
+
+def _resolve_output_dir(forecast_id: uuid.UUID, settings: Settings) -> Path:
+    """Derive and validate the output directory for a forecast.
+
+    Raises HTTP 404 if the directory does not exist on disk (e.g. stale DB row).
+    """
+    output_dir = settings.data_dir / "output" / str(forecast_id)
+    if not output_dir.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail="Output directory not found on disk",
+        )
+    return output_dir
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
 @router.post("/", response_model=ForecastResponse, status_code=201)
@@ -125,10 +188,52 @@ def get_forecast(
     forecast_id: uuid.UUID,
     db: Session = Depends(get_db),
 ) -> Forecast:
-    forecast = db.get(Forecast, forecast_id)
-    if forecast is None:
-        raise HTTPException(status_code=404, detail="Forecast not found")
-    return forecast
+    return _get_forecast_or_404(forecast_id, db)
+
+
+@router.get(
+    "/{forecast_id}/output",
+    response_model=ForecastOutputResponse,
+)
+def list_forecast_output(
+    forecast_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ForecastOutputResponse:
+    """List output files for a completed forecast."""
+    forecast = _get_forecast_or_404(forecast_id, db)
+    _require_completed_forecast(forecast)
+    output_dir = _resolve_output_dir(forecast_id, settings)
+
+    files = [
+        OutputFileInfo(filename=entry.name, size_bytes=entry.stat().st_size)
+        for entry in sorted(output_dir.iterdir())
+        if entry.is_file()
+    ]
+    return ForecastOutputResponse(forecast_id=forecast_id, files=files)
+
+
+@router.get("/{forecast_id}/output/{filename:path}")
+def download_forecast_output(
+    forecast_id: uuid.UUID,
+    filename: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    """Download a single output file from a completed forecast."""
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    forecast = _get_forecast_or_404(forecast_id, db)
+    _require_completed_forecast(forecast)
+    output_dir = _resolve_output_dir(forecast_id, settings)
+
+    file_path = output_dir / filename
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Output file not found")
+
+    media_type = _MEDIA_TYPES.get(file_path.suffix, "application/octet-stream")
+    return FileResponse(path=file_path, filename=filename, media_type=media_type)
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 # Phase 2: Backend API Design Report
 
-**Date:** May 15, 2026
-**Status:** In progress -- terrain, weather, and solver pipelines implemented and reviewed; output file serving endpoints and end-to-end integration still pending
+**Date:** May 18, 2026
+**Status:** Complete -- all services (terrain, weather, solver), API endpoints (forecast areas, forecasts, output serving), and tests (190 passing, 2 env-gated integration tests) implemented and reviewed
 
 ## Objective
 
@@ -153,7 +153,7 @@ File path convention:
 Database initialization:
 - `database.py` has zero side effects at import time. It defines `Base` and provides `build_engine()` / `build_session_factory()` factory functions. The engine is created lazily by `deps.py` (via `@lru_cache`) on first HTTP request. This allows tests to override the URL and Alembic to manage its own engine independently.
 
-## API Endpoints (planned)
+## API Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -395,7 +395,8 @@ sequenceDiagram
 
     BG->>BG: write metadata.json
     BG->>DB: status -> running_solver
-    Note over BG: Solver not yet implemented
+    BG->>BG: run_solver_for_forecast()
+    Note over BG: Per-timestep .cfg generation<br/>+ Docker WindNinja_cli<br/>+ retry with mesh cache cleanup
     BG->>DB: status -> completed
 ```
 
@@ -475,11 +476,11 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/models/database.py` | Declarative Base, engine/session factory builders (zero import side effects) |
 | `backend/models/enums.py` | ForecastStatus, WeatherModel, SolverType enums (no heavy imports) |
 | `backend/models/orm.py` | ORM models, tile cache selection classmethods |
-| `backend/models/schemas.py` | Pydantic request/response schemas with UUID validation |
+| `backend/models/schemas.py` | Pydantic request/response schemas with UUID validation, output file listing schemas |
 | `backend/api/main.py` | FastAPI app with lifespan, configurable CORS, router registration |
 | `backend/api/deps.py` | FastAPI dependencies: lazy DB engine (@lru_cache), session, settings |
 | `backend/api/routers/forecast_areas.py` | ForecastArea CRUD endpoints |
-| `backend/api/routers/forecasts.py` | POST/GET /forecasts with terrain resolution, background worker, weather + solver pipeline |
+| `backend/api/routers/forecasts.py` | POST/GET /forecasts with terrain resolution, background worker, weather + solver pipeline; GET output listing and file download with 409 status gating |
 | `backend/services/terrain_geometry.py` | Pure WGS84 bbox, square construction, fractional padding, CONUS validation |
 | `backend/services/terrain_dem.py` | USGS 3DEP DEM download via py3dep, UTM reprojection |
 | `backend/services/terrain_lcp.py` | LANDFIRE LCP via Docker ``fetch_dem``, ``.prj`` sidecar generation |
@@ -497,6 +498,10 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/tests/test_solver_config.py` | Config generation tests: output format, solver types, validation (23 tests) |
 | `backend/tests/test_solver_runner.py` | Docker execution and mesh cache cleanup tests (14 tests) |
 | `backend/tests/test_solver.py` | Solver orchestrator tests: happy path, retry, cleanup, ordering (12 tests) |
+| `backend/tests/test_forecasts_api.py` | Forecast endpoint + shared helper + output endpoint tests (30 tests) |
+| `backend/tests/test_forecast_areas_api.py` | ForecastArea CRUD tests via TestClient (11 tests) |
+| `backend/tests/test_integration.py` | Mocked end-to-end pipeline test: submit -> run -> list output -> download (2 tests) |
+| `backend/tests/test_solver_integration.py` | Env-gated Docker solver integration test (RUN_SOLVER_INTEGRATION=1) |
 | `backend/requirements.txt` | Pinned dependencies for Docker layer caching (derived from pyproject.toml) |
 | `backend/Dockerfile` | Python 3.12 image with GDAL, deps-first layer caching |
 | `docker-compose.yml` | Postgres-only (backend runs natively) |
@@ -504,7 +509,35 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `.cursor/rules/import-conventions.mdc` | Import convention rule (relative within, absolute across) |
 | `.cursor/rules/variable-naming.mdc` | Readable variable naming rule |
 
-## Remaining Work
+## Output file serving
 
-- Implement output file serving endpoints (``GET /forecasts/{id}/output``)
-- End-to-end integration test: create forecast -> poll -> retrieve output
+### Design decisions
+
+- **409 Conflict for non-completed forecasts.** Output endpoints (`GET /forecasts/{id}/output` and `GET /forecasts/{id}/output/{filename}`) return 409 with the current forecast status in the response body when the forecast has not reached ``completed``. This gives the frontend actionable information: keep polling (queued/fetching_weather/running_solver), show error (failed), or show cancelled state.
+
+- **Serve any file in the output directory.** Path traversal prevention (rejecting ``..`` and ``/`` in filenames) is the only guard. No file extension allowlist. The output directory has a clean lifecycle: created by the solver service, removed on failure.
+
+- **Shared helpers consolidate endpoint logic.** ``_get_forecast``, ``_require_completed_forecast``, and ``_resolve_output_dir`` are used by ``get_forecast``, ``list_forecast_output``, and ``download_forecast_output``.
+
+### Response schemas
+
+```
+OutputFileInfo
+  filename: str, size_bytes: int
+
+ForecastOutputResponse
+  forecast_id: UUID, files: list[OutputFileInfo]
+```
+
+## Phase 2 Completion Summary
+
+All Phase 2 work is complete. The backend provides:
+
+- **ForecastArea CRUD** (4 endpoints) for saved locations
+- **Forecast submission and status** (3 endpoints) with background worker pipeline
+- **Output file serving** (2 endpoints) with 409 status gating
+- **Health check** (1 endpoint)
+- **Terrain service**: USGS 3DEP DEM + LANDFIRE LCP with spatial caching
+- **Weather service**: HRRR via Herbie/S3 with cycle resolution and ASCII grid conversion
+- **Solver service**: WindNinja Docker execution with retry and mesh cache cleanup
+- **190 unit tests passing**, 2 env-gated integration tests (terrain + solver)

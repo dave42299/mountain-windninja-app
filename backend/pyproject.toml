@@ -56,5 +56,5 @@ strict = true
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
-    "integration: exercises network and/or Docker; enable with RUN_TERRAIN_INTEGRATION=1",
+    "integration: exercises network and/or Docker; enable with RUN_TERRAIN_INTEGRATION=1 or RUN_SOLVER_INTEGRATION=1",
 ]
