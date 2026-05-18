@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from models.enums import SolverType
+from tests.conftest import utc
 from services.solver import (
     SolverConfigError,
     SolverExecutionError,
@@ -21,10 +22,6 @@ from services.solver_config import WindNinjaConfigSpec
 from services.solver_runner import SolverTimestepResult
 from services.weather import ForcingTimestep, ForecastWeatherGrids
 from services.weather_models import HrrrCycle
-
-
-def _utc(year: int, month: int, day: int, hour: int = 0) -> datetime:
-    return datetime(year, month, day, hour, tzinfo=timezone.utc)
 
 
 def _make_fake_elevation_tile(
@@ -92,7 +89,7 @@ class TestRunSolverHappyPath:
         tmp_path: Path,
     ) -> None:
         forecast_id = str(uuid.uuid4())
-        start = _utc(2026, 5, 10, 12)
+        start = utc(2026, 5, 10, 12)
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
         weather = _make_weather_grids(forecast_id, start, 3)
 
@@ -133,7 +130,7 @@ class TestRunSolverHappyPath:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 1)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 1)
 
         mock_gen_config.side_effect = lambda spec, **kw: _fake_config(spec, **kw)
         mock_execute.return_value = SolverTimestepResult(
@@ -163,7 +160,7 @@ class TestRunSolverHappyPath:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 2)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 2)
 
         mock_gen_config.side_effect = lambda spec, **kw: _fake_config(spec, **kw)
         mock_execute.return_value = SolverTimestepResult(
@@ -201,7 +198,7 @@ class TestRunSolverHappyPath:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 4)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 4)
 
         mock_gen_config.side_effect = lambda spec, **kw: _fake_config(spec, **kw)
         mock_execute.return_value = SolverTimestepResult(
@@ -232,7 +229,7 @@ class TestRunSolverHappyPath:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(file_path="elevation/dem123.tif", data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 1)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 1)
 
         captured_specs: list[WindNinjaConfigSpec] = []
 
@@ -272,7 +269,7 @@ class TestRunSolverHappyPath:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 1)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 1)
 
         captured_specs: list[WindNinjaConfigSpec] = []
 
@@ -317,7 +314,7 @@ class TestRetryLogic:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 1)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 1)
 
         mock_gen_config.side_effect = lambda spec, **kw: _fake_config(spec, **kw)
 
@@ -361,7 +358,7 @@ class TestRetryLogic:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 1)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 1)
 
         mock_gen_config.side_effect = lambda spec, **kw: _fake_config(spec, **kw)
         mock_execute.side_effect = SolverExecutionError("persistent failure")
@@ -402,7 +399,7 @@ class TestFailureCleanup:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 1)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 1)
 
         mock_gen_config.side_effect = lambda spec, **kw: _fake_config(spec, **kw)
         mock_execute.side_effect = SolverExecutionError("Docker crash")
@@ -435,7 +432,7 @@ class TestFailureCleanup:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(file_path="elevation/tile99.tif", data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 1)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 1)
 
         mock_gen_config.side_effect = lambda spec, **kw: _fake_config(spec, **kw)
         mock_execute.side_effect = SolverExecutionError("OOM")
@@ -466,7 +463,7 @@ class TestFailureCleanup:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 1)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 1)
 
         mock_gen_config.side_effect = SolverConfigError("bad config")
 
@@ -498,7 +495,7 @@ class TestPreflightChecks:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(file_path="elevation/nonexistent.tif")
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 1)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 1)
 
         with pytest.raises(SolverConfigError, match="Elevation file not found"):
             run_solver_for_forecast(
@@ -524,7 +521,7 @@ class TestOrchestrationOrder:
     ) -> None:
         forecast_id = str(uuid.uuid4())
         tile = _make_fake_elevation_tile(data_dir=tmp_path)
-        weather = _make_weather_grids(forecast_id, _utc(2026, 5, 10, 12), 2)
+        weather = _make_weather_grids(forecast_id, utc(2026, 5, 10, 12), 2)
 
         call_order: list[str] = []
 

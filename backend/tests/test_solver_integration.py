@@ -18,7 +18,6 @@ from __future__ import annotations
 import os
 import shutil
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +27,7 @@ from rasterio.crs import CRS
 from rasterio.transform import from_bounds
 
 from models.enums import SolverType
+from tests.conftest import utc
 from models.orm import ElevationTile
 from services.solver import SolverResult, run_solver_for_forecast
 from services.weather import ForcingTimestep, ForecastWeatherGrids
@@ -39,10 +39,6 @@ _SKIP_REASON = (
     "Set RUN_SOLVER_INTEGRATION=1 to run Docker-based solver tests. "
     "Requires mountain-windninja:local Docker image."
 )
-
-
-def _utc(year: int, month: int, day: int, hour: int = 0) -> datetime:
-    return datetime(year, month, day, hour, tzinfo=timezone.utc)
 
 
 def _write_synthetic_dem(path: Path, *, rows: int = 50, cols: int = 50) -> None:
@@ -107,7 +103,7 @@ def _make_forcing_grids(
     weather_dir.mkdir(parents=True, exist_ok=True)
     relative_weather_dir = Path("weather") / forecast_id
 
-    valid_time = _utc(2026, 5, 15, 12)
+    valid_time = utc(2026, 5, 15, 12)
     label = valid_time.strftime("%Y%m%d_%H%M")
 
     speed_path = weather_dir / f"speed_{label}.asc"

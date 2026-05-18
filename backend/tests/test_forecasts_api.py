@@ -3,110 +3,27 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from config import Settings
-from models.database import Base
-from models.enums import ForecastStatus, SolverType, WeatherModel
-from models.orm import ElevationTile, Forecast, ForecastArea, LandCoverTile
+from models.enums import ForecastStatus
+from models.orm import Forecast
 from models.schemas import ForecastCreate
+from tests.conftest import (
+    insert_forecast,
+    insert_forecast_area,
+    insert_tiles,
+    make_non_closing_factory,
+    utc,
+)
 
 
-def _utc(year: int, month: int, day: int, hour: int = 0) -> datetime:
-    return datetime(year, month, day, hour, tzinfo=timezone.utc)
-
-
-_NOW = _utc(2026, 5, 15, 12)
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def db_session() -> Session:  # type: ignore[override]
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
-
-
-def _insert_tiles(session: Session) -> tuple[ElevationTile, LandCoverTile]:
-    elev = ElevationTile(
-        id=uuid.uuid4(),
-        bbox_north=39.85,
-        bbox_south=39.65,
-        bbox_east=-105.65,
-        bbox_west=-105.85,
-        crs_epsg=32613,
-        file_path="elevation/test.tif",
-        source="usgs_3dep",
-        file_size_bytes=10000,
-    )
-    lcp = LandCoverTile(
-        id=uuid.uuid4(),
-        bbox_north=39.85,
-        bbox_south=39.65,
-        bbox_east=-105.65,
-        bbox_west=-105.85,
-        crs_epsg=5070,
-        file_path="land_cover/test.lcp",
-        source="landfire",
-        file_size_bytes=20000,
-    )
-    session.add_all([elev, lcp])
-    session.flush()
-    return elev, lcp
-
-
-def _insert_forecast_area(session: Session) -> ForecastArea:
-    area = ForecastArea(
-        id=uuid.uuid4(),
-        label="Berthoud Pass",
-        center_latitude=39.80,
-        center_longitude=-105.77,
-        size_km=10.0,
-    )
-    session.add(area)
-    session.flush()
-    return area
-
-
-def _insert_forecast(
-    session: Session,
-    elev: ElevationTile,
-    lcp: LandCoverTile,
-    *,
-    status: ForecastStatus = ForecastStatus.queued,
-    forecast_area_id: uuid.UUID | None = None,
-) -> Forecast:
-    forecast = Forecast(
-        id=uuid.uuid4(),
-        forecast_area_id=forecast_area_id,
-        center_latitude=39.80,
-        center_longitude=-105.77,
-        size_km=10.0,
-        elevation_tile_id=elev.id,
-        land_cover_tile_id=lcp.id,
-        status=status,
-        weather_model=WeatherModel.hrrr,
-        solver_type=SolverType.momentum,
-        output_wind_height=10.0,
-        forecast_start=_utc(2026, 5, 15, 6),
-        duration_hours=6,
-    )
-    session.add(forecast)
-    session.flush()
-    return forecast
+_NOW = utc(2026, 5, 15, 12)
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +51,7 @@ class TestResolveLocation:
     def test_from_forecast_area(self, db_session: Session) -> None:
         from api.routers.forecasts import _resolve_location
 
-        area = _insert_forecast_area(db_session)
+        area = insert_forecast_area(db_session)
         body = ForecastCreate(
             forecast_area_id=area.id,
             forecast_start=_NOW,
@@ -167,18 +84,6 @@ class TestResolveLocation:
 
 
 class TestRunForecastPipelineHappyPath:
-    @staticmethod
-    def _make_non_closing_factory(session: Session):
-        """Build a factory whose sessions skip close() so assertions can
-        inspect the same session afterward.  _run_forecast_pipeline calls
-        ``session.close()`` in its ``finally`` block; patching it out lets
-        us keep the session alive for post-run assertions.
-        """
-        def factory():
-            session.close = lambda: None  # type: ignore[assignment]
-            return session
-        return factory
-
     @patch("api.routers.forecasts.run_solver_for_forecast")
     @patch("api.routers.forecasts.prepare_weather_for_forecast")
     def test_status_transitions_queued_to_completed(
@@ -189,8 +94,8 @@ class TestRunForecastPipelineHappyPath:
     ) -> None:
         from api.routers.forecasts import _run_forecast_pipeline
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
         forecast_id = forecast.id
 
@@ -198,7 +103,7 @@ class TestRunForecastPipelineHappyPath:
         mock_solver.return_value = MagicMock()
 
         with patch("api.routers.forecasts.get_session_factory") as mock_factory:
-            mock_factory.return_value = self._make_non_closing_factory(db_session)
+            mock_factory.return_value = make_non_closing_factory(db_session)
             _run_forecast_pipeline(forecast_id)
 
         reloaded = db_session.get(Forecast, forecast_id)
@@ -218,8 +123,8 @@ class TestRunForecastPipelineHappyPath:
     ) -> None:
         from api.routers.forecasts import _run_forecast_pipeline
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
         forecast_id = forecast.id
 
@@ -227,7 +132,7 @@ class TestRunForecastPipelineHappyPath:
         mock_solver.return_value = MagicMock()
 
         with patch("api.routers.forecasts.get_session_factory") as mock_factory:
-            mock_factory.return_value = self._make_non_closing_factory(db_session)
+            mock_factory.return_value = make_non_closing_factory(db_session)
             _run_forecast_pipeline(forecast_id)
 
         call_kwargs = mock_weather.call_args.kwargs
@@ -243,13 +148,6 @@ class TestRunForecastPipelineHappyPath:
 
 
 class TestRunForecastPipelineFailure:
-    @staticmethod
-    def _make_non_closing_factory(session: Session):
-        def factory():
-            session.close = lambda: None  # type: ignore[assignment]
-            return session
-        return factory
-
     @patch("api.routers.forecasts.prepare_weather_for_forecast")
     def test_weather_time_range_error_sets_failed_status(
         self,
@@ -260,15 +158,15 @@ class TestRunForecastPipelineFailure:
 
         from api.routers.forecasts import _run_forecast_pipeline
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
         forecast_id = forecast.id
 
         mock_weather.side_effect = WeatherTimeRangeError("before archive start")
 
         with patch("api.routers.forecasts.get_session_factory") as mock_factory:
-            mock_factory.return_value = self._make_non_closing_factory(db_session)
+            mock_factory.return_value = make_non_closing_factory(db_session)
             _run_forecast_pipeline(forecast_id)
 
         reloaded = db_session.get(Forecast, forecast_id)
@@ -286,15 +184,15 @@ class TestRunForecastPipelineFailure:
 
         from api.routers.forecasts import _run_forecast_pipeline
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
         forecast_id = forecast.id
 
         mock_weather.side_effect = WeatherDownloadError("S3 timeout")
 
         with patch("api.routers.forecasts.get_session_factory") as mock_factory:
-            mock_factory.return_value = self._make_non_closing_factory(db_session)
+            mock_factory.return_value = make_non_closing_factory(db_session)
             _run_forecast_pipeline(forecast_id)
 
         reloaded = db_session.get(Forecast, forecast_id)
@@ -313,8 +211,8 @@ class TestRunForecastPipelineFailure:
 
         from api.routers.forecasts import _run_forecast_pipeline
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
         forecast_id = forecast.id
 
@@ -322,7 +220,7 @@ class TestRunForecastPipelineFailure:
         mock_solver.side_effect = SolverConfigError("bad config spec")
 
         with patch("api.routers.forecasts.get_session_factory") as mock_factory:
-            mock_factory.return_value = self._make_non_closing_factory(db_session)
+            mock_factory.return_value = make_non_closing_factory(db_session)
             _run_forecast_pipeline(forecast_id)
 
         reloaded = db_session.get(Forecast, forecast_id)
@@ -341,8 +239,8 @@ class TestRunForecastPipelineFailure:
 
         from api.routers.forecasts import _run_forecast_pipeline
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
         forecast_id = forecast.id
 
@@ -350,7 +248,7 @@ class TestRunForecastPipelineFailure:
         mock_solver.side_effect = SolverExecutionError("Docker crash after retries")
 
         with patch("api.routers.forecasts.get_session_factory") as mock_factory:
-            mock_factory.return_value = self._make_non_closing_factory(db_session)
+            mock_factory.return_value = make_non_closing_factory(db_session)
             _run_forecast_pipeline(forecast_id)
 
         reloaded = db_session.get(Forecast, forecast_id)
@@ -365,15 +263,15 @@ class TestRunForecastPipelineFailure:
     ) -> None:
         from api.routers.forecasts import _run_forecast_pipeline
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
         forecast_id = forecast.id
 
         mock_weather.side_effect = RuntimeError("something unexpected")
 
         with patch("api.routers.forecasts.get_session_factory") as mock_factory:
-            mock_factory.return_value = self._make_non_closing_factory(db_session)
+            mock_factory.return_value = make_non_closing_factory(db_session)
             _run_forecast_pipeline(forecast_id)
 
         reloaded = db_session.get(Forecast, forecast_id)
@@ -406,8 +304,8 @@ class TestStatusHelpers:
     ) -> None:
         from api.routers.forecasts import _update_status
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
 
         assert forecast.started_at is None
@@ -420,8 +318,8 @@ class TestStatusHelpers:
     ) -> None:
         from api.routers.forecasts import _update_status
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
 
         _update_status(db_session, forecast, ForecastStatus.completed)
@@ -433,8 +331,8 @@ class TestStatusHelpers:
     ) -> None:
         from api.routers.forecasts import _fail_forecast
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
 
         _fail_forecast(db_session, forecast, "download failed")
@@ -449,12 +347,12 @@ class TestStatusHelpers:
 # ---------------------------------------------------------------------------
 
 
-class TestGetForecastOr404:
+class TestGetForecast:
     def test_returns_forecast(self, db_session: Session) -> None:
         from api.routers.forecasts import _get_forecast_or_404
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(db_session, elev, lcp)
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(db_session, elev, lcp)
         db_session.commit()
 
         result = _get_forecast_or_404(forecast.id, db_session)
@@ -472,8 +370,8 @@ class TestRequireCompletedForecast:
     def test_passes_for_completed(self, db_session: Session) -> None:
         from api.routers.forecasts import _require_completed_forecast
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.completed,
         )
         db_session.commit()
@@ -482,8 +380,8 @@ class TestRequireCompletedForecast:
     def test_raises_409_for_running(self, db_session: Session) -> None:
         from api.routers.forecasts import _require_completed_forecast
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.running_solver,
         )
         db_session.commit()
@@ -496,8 +394,8 @@ class TestRequireCompletedForecast:
     def test_raises_409_for_failed(self, db_session: Session) -> None:
         from api.routers.forecasts import _require_completed_forecast
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.failed,
         )
         db_session.commit()
@@ -538,8 +436,8 @@ class TestListForecastOutput:
     def test_happy_path(self, db_session: Session, tmp_path: Path) -> None:
         from api.routers.forecasts import list_forecast_output
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.completed,
         )
         db_session.commit()
@@ -573,8 +471,8 @@ class TestListForecastOutput:
     def test_forecast_not_completed(self, db_session: Session, tmp_path: Path) -> None:
         from api.routers.forecasts import list_forecast_output
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.queued,
         )
         db_session.commit()
@@ -589,8 +487,8 @@ class TestListForecastOutput:
     def test_missing_directory(self, db_session: Session, tmp_path: Path) -> None:
         from api.routers.forecasts import list_forecast_output
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.completed,
         )
         db_session.commit()
@@ -612,8 +510,8 @@ class TestDownloadForecastOutput:
     def test_happy_path(self, db_session: Session, tmp_path: Path) -> None:
         from api.routers.forecasts import download_forecast_output
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.completed,
         )
         db_session.commit()
@@ -637,8 +535,8 @@ class TestDownloadForecastOutput:
     ) -> None:
         from api.routers.forecasts import download_forecast_output
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.completed,
         )
         db_session.commit()
@@ -658,8 +556,8 @@ class TestDownloadForecastOutput:
     ) -> None:
         from api.routers.forecasts import download_forecast_output
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.completed,
         )
         db_session.commit()
@@ -677,8 +575,8 @@ class TestDownloadForecastOutput:
     def test_file_not_found(self, db_session: Session, tmp_path: Path) -> None:
         from api.routers.forecasts import download_forecast_output
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.completed,
         )
         db_session.commit()
@@ -699,8 +597,8 @@ class TestDownloadForecastOutput:
     def test_json_media_type(self, db_session: Session, tmp_path: Path) -> None:
         from api.routers.forecasts import download_forecast_output
 
-        elev, lcp = _insert_tiles(db_session)
-        forecast = _insert_forecast(
+        elev, lcp = insert_tiles(db_session)
+        forecast = insert_forecast(
             db_session, elev, lcp, status=ForecastStatus.completed,
         )
         db_session.commit()

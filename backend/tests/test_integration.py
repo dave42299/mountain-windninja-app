@@ -14,64 +14,28 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import StaticPool, create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from api.deps import get_db, get_session_factory, get_settings
+from api.deps import get_db, get_settings
 from api.main import app
 from config import Settings
-from models.database import Base
-from models.enums import ForecastStatus, SolverType, WeatherModel
+from models.enums import ForecastStatus
 from models.orm import ElevationTile, LandCoverTile
 from services.terrain import ForecastTerrainTiles
 from services.terrain_geometry import Wgs84BoundingBox
 from services.weather import ForcingTimestep, ForecastWeatherGrids
 from services.weather_models import HrrrCycle
-
-
-def _utc(year: int, month: int, day: int, hour: int = 0) -> datetime:
-    return datetime(year, month, day, hour, tzinfo=timezone.utc)
-
-
-_BERTHOUD_LAT = 39.80
-_BERTHOUD_LON = -105.77
-_SIZE_KM = 10.0
+from tests.conftest import BERTHOUD_LAT, BERTHOUD_LON, BERTHOUD_SIZE_KM, utc
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def db_engine():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    return engine
-
-
-@pytest.fixture
-def db_session(db_engine):
-    session = sessionmaker(bind=db_engine)()
-    yield session
-    session.close()
-
-
-@pytest.fixture
-def test_settings(tmp_path: Path):
-    for subdir in ("elevation", "land_cover", "output", "weather"):
-        (tmp_path / subdir).mkdir()
-    return Settings(data_dir=tmp_path, database_url="sqlite:///:memory:")
 
 
 @pytest.fixture
@@ -109,12 +73,7 @@ def _seed_tiles(db_session: Session, test_settings: Settings):
 
 
 @pytest.fixture
-def session_factory(db_engine):
-    return sessionmaker(bind=db_engine)
-
-
-@pytest.fixture
-def client(db_engine, session_factory, test_settings: Settings):
+def client(session_factory, test_settings: Settings):
     def _override_db():
         session = session_factory()
         try:
@@ -159,7 +118,7 @@ def _make_weather_grids(
 
     timesteps: list[ForcingTimestep] = []
     for i in range(num_timesteps):
-        valid_time = _utc(2026, 5, 15, 6 + i)
+        valid_time = utc(2026, 5, 15, 6 + i)
         label = valid_time.strftime("%Y%m%d_%H%M")
 
         speed_file = weather_dir / f"speed_{label}.asc"
@@ -249,9 +208,9 @@ class TestEndToEndHappyPath:
 
             # 1. Submit forecast
             create_response = client.post("/forecasts/", json={
-                "latitude": _BERTHOUD_LAT,
-                "longitude": _BERTHOUD_LON,
-                "size_km": _SIZE_KM,
+                "latitude": BERTHOUD_LAT,
+                "longitude": BERTHOUD_LON,
+                "size_km": BERTHOUD_SIZE_KM,
                 "forecast_start": "2026-05-15T06:00:00Z",
                 "duration_hours": 3,
             })
@@ -314,9 +273,9 @@ class TestEndToEndWeatherFailure:
             ),
         ):
             create_response = client.post("/forecasts/", json={
-                "latitude": _BERTHOUD_LAT,
-                "longitude": _BERTHOUD_LON,
-                "size_km": _SIZE_KM,
+                "latitude": BERTHOUD_LAT,
+                "longitude": BERTHOUD_LON,
+                "size_km": BERTHOUD_SIZE_KM,
                 "forecast_start": "2026-05-15T06:00:00Z",
                 "duration_hours": 3,
             })

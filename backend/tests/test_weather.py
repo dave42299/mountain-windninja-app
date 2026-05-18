@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from models.enums import WeatherModel
+from tests.conftest import utc
 from services.weather import (
     ForecastWeatherGrids,
     WeatherDownloadError,
@@ -20,10 +20,6 @@ from services.weather import (
 )
 from services.weather_hrrr import DemGridSpec
 from services.weather_models import HrrrCycle
-
-
-def _utc(year: int, month: int, day: int, hour: int = 0) -> datetime:
-    return datetime(year, month, day, hour, tzinfo=timezone.utc)
 
 
 def _make_fake_elevation_tile() -> MagicMock:
@@ -69,7 +65,7 @@ class TestPrepareWeatherHappyPath:
         tmp_path: Path,
     ) -> None:
         forecast_id = str(uuid.uuid4())
-        start = _utc(2026, 5, 10, 12)
+        start = utc(2026, 5, 10, 12)
         cycles = _make_cycles(start, 3)
         mock_resolve.return_value = cycles
         mock_read_dem.return_value = MagicMock(spec=DemGridSpec)
@@ -93,7 +89,7 @@ class TestPrepareWeatherHappyPath:
             weather_model=WeatherModel.hrrr,
             elevation_tile=tile,
             data_dir=tmp_path,
-            now=_utc(2026, 5, 10, 18),
+            now=utc(2026, 5, 10, 18),
         )
 
         assert isinstance(result, ForecastWeatherGrids)
@@ -121,7 +117,7 @@ class TestPrepareWeatherHappyPath:
         tmp_path: Path,
     ) -> None:
         forecast_id = str(uuid.uuid4())
-        start = _utc(2026, 5, 10, 12)
+        start = utc(2026, 5, 10, 12)
         cycles = _make_cycles(start, 2)
         mock_resolve.return_value = cycles
         mock_read_dem.return_value = MagicMock(spec=DemGridSpec)
@@ -145,7 +141,7 @@ class TestPrepareWeatherHappyPath:
             weather_model=WeatherModel.hrrr,
             elevation_tile=tile,
             data_dir=tmp_path,
-            now=_utc(2026, 5, 10, 18),
+            now=utc(2026, 5, 10, 18),
         )
 
         metadata_path = tmp_path / result.weather_dir / "metadata.json"
@@ -173,7 +169,7 @@ class TestPrepareWeatherHappyPath:
         tmp_path: Path,
     ) -> None:
         forecast_id = str(uuid.uuid4())
-        start = _utc(2026, 5, 10, 12)
+        start = utc(2026, 5, 10, 12)
         cycles = _make_cycles(start, 1)
         mock_resolve.return_value = cycles
         mock_read_dem.return_value = MagicMock(spec=DemGridSpec)
@@ -197,7 +193,7 @@ class TestPrepareWeatherHappyPath:
             weather_model=WeatherModel.hrrr,
             elevation_tile=tile,
             data_dir=tmp_path,
-            now=_utc(2026, 5, 10, 18),
+            now=utc(2026, 5, 10, 18),
         )
 
         ts = result.timesteps[0]
@@ -217,7 +213,7 @@ class TestNbmRejection:
         with pytest.raises(WeatherError, match="not yet supported"):
             prepare_weather_for_forecast(
                 forecast_id=str(uuid.uuid4()),
-                forecast_start=_utc(2026, 5, 10, 12),
+                forecast_start=utc(2026, 5, 10, 12),
                 duration_hours=6,
                 weather_model=WeatherModel.nbm,
                 elevation_tile=tile,
@@ -229,7 +225,7 @@ class TestNbmRejection:
         with pytest.raises(WeatherError, match="not yet supported"):
             prepare_weather_for_forecast(
                 forecast_id=str(uuid.uuid4()),
-                forecast_start=_utc(2026, 5, 10, 12),
+                forecast_start=utc(2026, 5, 10, 12),
                 duration_hours=6,
                 weather_model="nbm",
                 elevation_tile=tile,
@@ -248,7 +244,7 @@ class TestTimeValidation:
         with pytest.raises(WeatherTimeRangeError, match="archive start"):
             prepare_weather_for_forecast(
                 forecast_id=str(uuid.uuid4()),
-                forecast_start=_utc(2013, 1, 1),
+                forecast_start=utc(2013, 1, 1),
                 duration_hours=6,
                 weather_model=WeatherModel.hrrr,
                 elevation_tile=tile,
@@ -277,7 +273,7 @@ class TestFailureCleanup:
         tmp_path: Path,
     ) -> None:
         forecast_id = str(uuid.uuid4())
-        start = _utc(2026, 5, 10, 12)
+        start = utc(2026, 5, 10, 12)
         cycles = _make_cycles(start, 3)
         mock_resolve.return_value = cycles
         mock_read_dem.return_value = MagicMock(spec=DemGridSpec)
@@ -310,7 +306,7 @@ class TestFailureCleanup:
                 weather_model=WeatherModel.hrrr,
                 elevation_tile=tile,
                 data_dir=tmp_path,
-                now=_utc(2026, 5, 10, 18),
+                now=utc(2026, 5, 10, 18),
             )
 
         assert not weather_dir.exists()
@@ -328,7 +324,7 @@ class TestFailureCleanup:
         tmp_path: Path,
     ) -> None:
         forecast_id = str(uuid.uuid4())
-        start = _utc(2026, 5, 10, 12)
+        start = utc(2026, 5, 10, 12)
         cycles = _make_cycles(start, 3)
         mock_resolve.return_value = cycles
         mock_check.side_effect = WeatherDownloadError("HRRR data not available")
@@ -346,7 +342,7 @@ class TestFailureCleanup:
                 weather_model=WeatherModel.hrrr,
                 elevation_tile=tile,
                 data_dir=tmp_path,
-                now=_utc(2026, 5, 10, 18),
+                now=utc(2026, 5, 10, 18),
             )
 
         if weather_dir.exists():
@@ -375,7 +371,7 @@ class TestOrchestrationOrder:
     ) -> None:
         """Verify the pipeline executes in the correct order."""
         forecast_id = str(uuid.uuid4())
-        start = _utc(2026, 5, 10, 12)
+        start = utc(2026, 5, 10, 12)
         cycles = _make_cycles(start, 1)
         mock_resolve.return_value = cycles
         mock_read_dem.return_value = MagicMock(spec=DemGridSpec)
@@ -414,7 +410,7 @@ class TestOrchestrationOrder:
             weather_model=WeatherModel.hrrr,
             elevation_tile=tile,
             data_dir=tmp_path,
-            now=_utc(2026, 5, 10, 18),
+            now=utc(2026, 5, 10, 18),
         )
 
         assert call_order == ["validate", "resolve", "check", "process"]

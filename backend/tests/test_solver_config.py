@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from models.enums import SolverType
+from tests.conftest import utc
 from services.solver_config import (
     INPUT_WIND_HEIGHT_M,
     SolverConfigError,
@@ -16,17 +16,13 @@ from services.solver_config import (
 )
 
 
-def _utc(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
-    return datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
-
-
 def _make_spec(**overrides) -> WindNinjaConfigSpec:
     defaults = {
         "container_elevation_path": "/data/elevation/abc123.tif",
         "container_speed_grid_path": "/data/weather/fid/speed_20260510_1200.asc",
         "container_direction_grid_path": "/data/weather/fid/direction_20260510_1200.asc",
         "container_output_dir": "/data/output/fid",
-        "valid_time": _utc(2026, 5, 10, 12),
+        "valid_time": utc(2026, 5, 10, 12),
         "solver_type": SolverType.momentum,
         "output_wind_height": 10.0,
         "mesh_resolution": 100.0,
@@ -52,7 +48,7 @@ class TestGenerateConfig:
         assert result.parent == tmp_path
 
     def test_default_filename_contains_timestamp(self, tmp_path: Path) -> None:
-        spec = _make_spec(valid_time=_utc(2026, 5, 10, 14, 30))
+        spec = _make_spec(valid_time=utc(2026, 5, 10, 14, 30))
         result = generate_windninja_config(spec, host_output_dir=tmp_path)
 
         assert result.name == "windninja_20260510_1430.cfg"
@@ -111,7 +107,7 @@ class TestGenerateConfig:
         assert "diurnal_winds = false" in content
 
     def test_datetime_fields(self, tmp_path: Path) -> None:
-        spec = _make_spec(valid_time=_utc(2026, 1, 3, 18, 0))
+        spec = _make_spec(valid_time=utc(2026, 1, 3, 18, 0))
         result = generate_windninja_config(spec, host_output_dir=tmp_path)
         content = result.read_text()
 
