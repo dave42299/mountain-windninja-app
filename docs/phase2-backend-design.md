@@ -1,7 +1,7 @@
 # Phase 2: Backend API Design Report
 
 **Date:** May 18, 2026
-**Status:** Complete -- all services (terrain, weather, solver), API endpoints (forecast areas, forecasts, output serving), and tests (190 passing, 2 env-gated integration tests) implemented and reviewed
+**Status:** Complete -- all services (terrain, weather, solver), API endpoints (forecast areas, forecasts, output serving), and tests (201 passing, 2 env-gated integration tests) implemented and reviewed
 
 ## Objective
 
@@ -112,16 +112,18 @@ LandCoverTile (cached LCP files)
 Forecast (a single wind forecast job)
   id, forecast_area_id (nullable FK -> SET NULL) [indexed],
   center_latitude, center_longitude, size_km,
-  elevation_tile_id (FK -> RESTRICT), land_cover_tile_id (nullable FK -> RESTRICT),
-  status (enum) [indexed], weather_model (enum), solver_type (enum), output_wind_height,
-  forecast_start, duration_hours,
+  elevation_tile_id (nullable FK -> RESTRICT), land_cover_tile_id (nullable FK -> RESTRICT),
+  status (SaEnum ForecastStatus) [indexed], weather_model (enum), solver_type (enum),
+  output_wind_height, forecast_start, duration_hours,
   error_message, created_at [indexed], started_at, completed_at, updated_at (auto)
 ```
 
-Enums (defined in `backend/models/orm.py`, used by ORM defaults and Pydantic schemas):
-- **ForecastStatus:** queued, fetching_weather, running_solver, completed, failed
+Enums (defined in `backend/models/enums.py`, used by ORM defaults and Pydantic schemas):
+- **ForecastStatus:** queued, fetching_terrain, fetching_weather, running_solver, completed, failed, cancelled
 - **WeatherModel:** hrrr, nbm
 - **SolverType:** mass_conservation, momentum
+
+Note: `Forecast.status` is stored as `SaEnum(ForecastStatus, native_enum=False)` for type safety. `elevation_tile_id` is nullable at creation time -- the background task sets it after terrain resolves.
 
 Relationships:
 - ForecastArea has many Forecasts (optional grouping; SET NULL on area deletion)
@@ -174,25 +176,21 @@ Database initialization:
 User request (lat/lon, size_km, time, duration)
         |
         v
-  Compute user bbox (square from center + size_km)
+  Validate CONUS location (pure geometry, no I/O)
         |
         v
-  Compute padded bbox (e.g. 25% buffer) for download only
-        |
-        +---> Query elevation_tiles: stored bbox contains **user** bbox?
-        |       |-- Yes: reuse cached tile
-        |       |-- No:  download using **padded** bbox, insert row (stored bbox from file)
-        |
-        +---> Query land_cover_tiles: stored bbox contains **user** bbox?
-        |       |-- Yes: reuse cached tile
-        |       |-- No:  download using **padded** bbox, insert row (stored bbox from file)
+  Insert Forecast row (status: queued, tile IDs null)
+  Return 201 with forecast ID immediately
         |
         v
-  Insert Forecast row (status: queued)
-  Return forecast ID to user immediately
+  [Background worker -- injected settings + session factory]
         |
-        v
-  [Background worker]
+        +---> Resolve terrain (status: fetching_terrain)
+        |       +---> Compute user bbox (square from center + size_km)
+        |       +---> Compute padded bbox (25% buffer) for download
+        |       +---> Query elevation_tiles/land_cover_tiles cache
+        |       +---> Download on cache miss, insert tile rows
+        |       +---> Set elevation_tile_id, land_cover_tile_id on forecast
         |
         +---> Download HRRR GRIB2 from AWS S3 (status: fetching_weather)
         +---> Extract U/V wind, reproject to DEM CRS, write speed/dir grids
@@ -225,7 +223,7 @@ These principles were established during terrain service development and should 
 - A ``Wgs84BoundingBox`` always satisfies ``north > south`` and ``east > west``.
 - Cache lookup uses the **user bbox**; padding only enlarges the **download**.
 - A tile row is never committed without the corresponding file existing on disk.
-- A ``Forecast`` row is never inserted until both tile IDs exist.
+- A ``Forecast`` row is inserted with null tile IDs; the background task populates them after terrain resolves.
 - The terrain service owns its own transaction commits; callers must not wrap terrain resolution and Forecast insertion in a single transaction.
 
 ### Implementation summary
@@ -351,20 +349,24 @@ The standard 18-hour horizon of the 12 UTC cycle cannot reach May 11 08:00 (20 h
 sequenceDiagram
     participant User
     participant API as POST /forecasts
-    participant Terrain as terrain.py
     participant DB as PostgreSQL
     participant BG as Background Worker
+    participant Terrain as terrain.py
     participant WM as weather_models.py
     participant WH as weather_hrrr.py
     participant Herbie as Herbie / AWS S3
 
     User->>API: ForecastCreate (lat/lon, time, hours)
-    API->>Terrain: ensure_tiles_for_forecast()
-    Terrain-->>API: ForecastTerrainTiles (DEM + LCP)
-    API->>DB: INSERT Forecast (status=queued)
+    API->>API: _validate_conus_location() [pure geometry]
+    API->>DB: INSERT Forecast (status=queued, tile IDs null)
     API-->>User: 201 Created {forecast_id}
 
-    Note over BG: Background task starts
+    Note over BG: Background task starts (injected settings + session factory)
+
+    BG->>DB: status -> fetching_terrain
+    BG->>Terrain: ensure_tiles_for_forecast(data_dir, solver_image, ...)
+    Terrain-->>BG: ForecastTerrainTiles (DEM + LCP)
+    BG->>DB: UPDATE forecast SET elevation_tile_id, land_cover_tile_id
 
     BG->>DB: status -> fetching_weather
     BG->>WM: validate_hrrr_time_range()
@@ -408,7 +410,7 @@ The weather layer turns a forecast time window + DEM tile into per-timestep spee
 
 **GRIB processing pipeline.** For each timestep: Herbie downloads UGRD+VGRD at 10m above ground (byte-range S3 request, ~2-5 MB per timestep). rasterio reads the GRIB2, then ``rasterio.warp.reproject`` warps both bands from HRRR's native Lambert Conformal Conic to the DEM's UTM CRS at the padded extent. Numpy vectorized math converts U/V to speed/direction. The result is written as ESRI ASCII Grid with ``.prj`` sidecar.
 
-**Pipeline wiring.** ``POST /forecasts`` resolves terrain synchronously (tiles may be cached), inserts the Forecast row, then launches a background task. The background worker transitions status through ``fetching_weather`` → ``running_solver`` → ``completed``/``failed``, each status update committed independently.
+**Pipeline wiring.** ``POST /forecasts`` validates CONUS location synchronously (pure geometry, no I/O), inserts the Forecast row with ``status=queued`` and null tile IDs, then launches a background task with injected ``settings`` and ``session_factory``. The background worker transitions status through ``fetching_terrain`` → ``fetching_weather`` → ``running_solver`` → ``completed``/``failed``, each status update committed independently.
 
 ### Status
 
@@ -453,7 +455,7 @@ The solver layer turns weather forcing grids + a DEM tile into WindNinja output 
 
 **Retry and cleanup.** Each timestep is retried up to ``solver_max_retries`` times (default: 2) with mesh cache cleanup between attempts. On exhausted retries, ``run_solver_for_forecast`` removes the output directory and mesh cache, then re-raises.
 
-**Pipeline wiring.** The background worker in ``_run_forecast_pipeline`` calls ``run_solver_for_forecast`` after weather grids are prepared. Status transitions through ``fetching_weather`` → ``running_solver`` → ``completed``/``failed``.
+**Pipeline wiring.** The background worker in ``_run_forecast_pipeline`` resolves terrain, then fetches weather, then calls ``run_solver_for_forecast``. Status transitions through ``fetching_terrain`` → ``fetching_weather`` → ``running_solver`` → ``completed``/``failed``. Settings and session factory are injected at dispatch time.
 
 ### Status
 
@@ -480,7 +482,7 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/api/main.py` | FastAPI app with lifespan, configurable CORS, router registration |
 | `backend/api/deps.py` | FastAPI dependencies: lazy DB engine (@lru_cache), session, settings |
 | `backend/api/routers/forecast_areas.py` | ForecastArea CRUD endpoints |
-| `backend/api/routers/forecasts.py` | POST/GET /forecasts with terrain resolution, background worker, weather + solver pipeline; GET output listing and file download with 409 status gating |
+| `backend/api/routers/forecasts.py` | POST/GET /forecasts with non-blocking background pipeline (terrain + weather + solver), paginated listing, settings injection; GET output listing and file download with 409 + retry guidance |
 | `backend/services/terrain_geometry.py` | Pure WGS84 bbox, square construction, fractional padding, CONUS validation |
 | `backend/services/terrain_dem.py` | USGS 3DEP DEM download via py3dep, UTM reprojection |
 | `backend/services/terrain_lcp.py` | LANDFIRE LCP via Docker ``fetch_dem``, ``.prj`` sidecar generation |
@@ -498,9 +500,9 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/tests/test_solver_config.py` | Config generation tests: output format, solver types, validation (23 tests) |
 | `backend/tests/test_solver_runner.py` | Docker execution and mesh cache cleanup tests (14 tests) |
 | `backend/tests/test_solver.py` | Solver orchestrator tests: happy path, retry, cleanup, ordering (12 tests) |
-| `backend/tests/test_forecasts_api.py` | Forecast endpoint + shared helper + output endpoint tests (30 tests) |
+| `backend/tests/test_forecasts_api.py` | Forecast endpoint + shared helper + output endpoint + pagination/filter tests (40 tests) |
 | `backend/tests/test_forecast_areas_api.py` | ForecastArea CRUD tests via TestClient (11 tests) |
-| `backend/tests/test_integration.py` | Mocked end-to-end pipeline test: submit -> run -> list output -> download (2 tests) |
+| `backend/tests/test_integration.py` | Mocked end-to-end pipeline tests: submit -> run -> list output -> download -> pagination (3 tests) |
 | `backend/tests/test_solver_integration.py` | Env-gated Docker solver integration test (RUN_SOLVER_INTEGRATION=1) |
 | `backend/requirements.txt` | Pinned dependencies for Docker layer caching (derived from pyproject.toml) |
 | `backend/Dockerfile` | Python 3.12 image with GDAL, deps-first layer caching |
@@ -513,9 +515,9 @@ The FastAPI lifespan handler creates the data directory structure on first start
 
 ### Design decisions
 
-- **409 Conflict for non-completed forecasts.** Output endpoints (`GET /forecasts/{id}/output` and `GET /forecasts/{id}/output/{filename}`) return 409 with the current forecast status in the response body when the forecast has not reached ``completed``. This gives the frontend actionable information: keep polling (queued/fetching_weather/running_solver), show error (failed), or show cancelled state.
+- **409 Conflict with retry guidance for non-completed forecasts.** Output endpoints (`GET /forecasts/{id}/output` and `GET /forecasts/{id}/output/{filename}`) return 409 with the current forecast status and ``retry_after_seconds`` in the response body when the forecast has not reached ``completed``. This gives the frontend actionable information: poll after the suggested interval (queued=5s, fetching_terrain=30s, fetching_weather=30s, running_solver=60s), show error (failed, retry_after_seconds=null), or show cancelled state.
 
-- **Serve any file in the output directory.** Path traversal prevention (rejecting ``..`` and ``/`` in filenames) is the only guard. No file extension allowlist. The output directory has a clean lifecycle: created by the solver service, removed on failure.
+- **Serve any file in the output directory.** Path traversal prevention (rejecting ``..`` and ``/`` in filenames) is the only guard. No file extension allowlist. The output directory has a clean lifecycle: created by the solver service, removed on failure. Media type mapping includes ``.asc``, ``.cfg``, ``.prj``, ``.json``, ``.tif``, and ``.kmz``; unknown extensions fall back to ``application/octet-stream``.
 
 - **Shared helpers consolidate endpoint logic.** ``_get_forecast``, ``_require_completed_forecast``, and ``_resolve_output_dir`` are used by ``get_forecast``, ``list_forecast_output``, and ``download_forecast_output``.
 
@@ -527,17 +529,29 @@ OutputFileInfo
 
 ForecastOutputResponse
   forecast_id: UUID, files: list[OutputFileInfo]
+
+PaginatedForecastResponse
+  items: list[ForecastResponse], total: int, limit: int, offset: int
 ```
+
+### List endpoint pagination
+
+``GET /forecasts`` returns paginated results. Query parameters:
+- ``limit`` (default 50, range 1-200): max items per page
+- ``offset`` (default 0): skip first N items
+- ``status``: filter by ForecastStatus enum value
+- ``forecast_area_id``: filter by saved area UUID
 
 ## Phase 2 Completion Summary
 
 All Phase 2 work is complete. The backend provides:
 
 - **ForecastArea CRUD** (4 endpoints) for saved locations
-- **Forecast submission and status** (3 endpoints) with background worker pipeline
-- **Output file serving** (2 endpoints) with 409 status gating
-- **Health check** (1 endpoint)
+- **Forecast submission and status** (3 endpoints) with non-blocking background worker pipeline (terrain + weather + solver)
+- **Output file serving** (2 endpoints) with 409 status gating and retry guidance
+- **Paginated forecast listing** with status and forecast area filters
+- **Health check** (1 endpoint) with database connectivity probe
 - **Terrain service**: USGS 3DEP DEM + LANDFIRE LCP with spatial caching
 - **Weather service**: HRRR via Herbie/S3 with cycle resolution and ASCII grid conversion
 - **Solver service**: WindNinja Docker execution with retry and mesh cache cleanup
-- **190 unit tests passing**, 2 env-gated integration tests (terrain + solver)
+- **201 unit tests passing**, 2 env-gated integration tests (terrain + solver)

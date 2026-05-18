@@ -1,11 +1,17 @@
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from config import settings
 
+from .deps import get_db
 from .routers import forecast_areas, forecasts
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -35,5 +41,10 @@ app.include_router(forecasts.router)
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health(db: Session = Depends(get_db)) -> dict[str, str]:
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "ok"}
+    except Exception:
+        logger.exception("Health check: database unreachable")
+        return {"status": "degraded", "database": "unreachable"}

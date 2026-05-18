@@ -6,8 +6,9 @@ Exercises the full API surface with mocked external I/O:
 
 External boundaries mocked:
   - terrain downloads (USGS, LANDFIRE, Docker) via ensure_tiles_for_forecast
+  - CONUS validation via _validate_conus_location
   - weather downloads (Herbie / S3) via prepare_weather_for_forecast
-  - solver execution (Docker) via execute_windninja
+  - solver execution (Docker) via run_solver_for_forecast
 """
 
 from __future__ import annotations
@@ -188,6 +189,9 @@ class TestEndToEndHappyPath:
 
         with (
             patch(
+                "api.routers.forecasts._validate_conus_location",
+            ),
+            patch(
                 "api.routers.forecasts.ensure_tiles_for_forecast",
                 return_value=terrain_result,
             ),
@@ -215,10 +219,9 @@ class TestEndToEndHappyPath:
                 "duration_hours": 3,
             })
             assert create_response.status_code == 201
-            forecast_id = create_response.json()["id"]
-
-            # The background task ran synchronously in TestClient,
-            # so the pipeline should have completed.
+            forecast_data = create_response.json()
+            forecast_id = forecast_data["id"]
+            assert forecast_data["status"] == "queued" or forecast_data["status"] == "completed"
 
         # 2. Check status
         status_response = client.get(f"/forecasts/{forecast_id}")
@@ -264,6 +267,9 @@ class TestEndToEndWeatherFailure:
 
         with (
             patch(
+                "api.routers.forecasts._validate_conus_location",
+            ),
+            patch(
                 "api.routers.forecasts.ensure_tiles_for_forecast",
                 return_value=terrain_result,
             ),
@@ -289,7 +295,61 @@ class TestEndToEndWeatherFailure:
         assert status_data["status"] == "failed"
         assert "S3 bucket unreachable" in status_data["error_message"]
 
-        # Output should return 409
+        # Output should return 409 with retry_after_seconds=None (failed)
         output_response = client.get(f"/forecasts/{forecast_id}/output")
         assert output_response.status_code == 409
-        assert output_response.json()["detail"]["status"] == "failed"
+        detail = output_response.json()["detail"]
+        assert detail["status"] == "failed"
+        assert detail["retry_after_seconds"] is None
+
+
+class TestEndToEndPagination:
+    """Verify paginated list_forecasts via HTTP."""
+
+    def test_paginated_list(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_settings: Settings,
+        _seed_tiles,
+    ) -> None:
+        elev, lcp = _seed_tiles
+        terrain_result = _make_terrain_mock(elev, lcp)
+
+        with (
+            patch("api.routers.forecasts._validate_conus_location"),
+            patch(
+                "api.routers.forecasts.ensure_tiles_for_forecast",
+                return_value=terrain_result,
+            ),
+            patch("api.routers.forecasts.prepare_weather_for_forecast") as mock_weather,
+            patch(
+                "api.routers.forecasts.run_solver_for_forecast",
+                side_effect=_solver_side_effect(test_settings),
+            ),
+        ):
+            mock_weather.side_effect = lambda **kw: _make_weather_grids(
+                test_settings, kw["forecast_id"],
+            )
+
+            for _ in range(3):
+                resp = client.post("/forecasts/", json={
+                    "latitude": BERTHOUD_LAT,
+                    "longitude": BERTHOUD_LON,
+                    "size_km": BERTHOUD_SIZE_KM,
+                    "forecast_start": "2026-05-15T06:00:00Z",
+                    "duration_hours": 1,
+                })
+                assert resp.status_code == 201
+
+        response = client.get("/forecasts/?limit=2&offset=0")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 3
+        assert len(data["items"]) == 2
+        assert data["limit"] == 2
+        assert data["offset"] == 0
+
+        response_page2 = client.get("/forecasts/?limit=2&offset=2")
+        data_page2 = response_page2.json()
+        assert len(data_page2["items"]) == 1

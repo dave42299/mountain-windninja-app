@@ -5,6 +5,7 @@ import enum
 
 class ForecastStatus(str, enum.Enum):
     queued = "queued"
+    fetching_terrain = "fetching_terrain"
     fetching_weather = "fetching_weather"
     running_solver = "running_solver"
     completed = "completed"

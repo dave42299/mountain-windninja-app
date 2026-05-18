@@ -104,7 +104,7 @@ class ForecastResponse(BaseModel):
     center_latitude: float
     center_longitude: float
     size_km: float
-    elevation_tile_id: uuid.UUID
+    elevation_tile_id: uuid.UUID | None = None
     land_cover_tile_id: uuid.UUID | None = None
     status: ForecastStatus
     weather_model: WeatherModel
@@ -117,6 +117,13 @@ class ForecastResponse(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     updated_at: datetime
+
+
+class PaginatedForecastResponse(BaseModel):
+    items: list[ForecastResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 # ---------------------------------------------------------------------------

@@ -22,8 +22,9 @@ Design decisions documented here:
   consistently across tiles. Each bbox column is individually indexed so
   PostgreSQL can combine them via bitmap AND scans for containment queries.
 
-- Forecast records which specific elevation and land cover tiles were used,
-  providing full traceability for reproducibility and validation.
+- Forecast tile FKs are nullable at creation time.  The background pipeline
+  resolves terrain first, then sets the tile IDs before proceeding to
+  weather/solver.  This keeps POST /forecasts non-blocking.
 
 - file_path on tile tables is stored relative to the application's data_dir
   setting (e.g. "elevation/abc123.tif", not an absolute path). The service
@@ -226,17 +227,20 @@ class Forecast(Base):
     center_longitude: Mapped[float] = mapped_column(Float, nullable=False)
     size_km: Mapped[float] = mapped_column(Float, nullable=False)
 
-    # Each forecast records the exact tiles it used so results are reproducible.
-    # RESTRICT prevents deleting tiles that are referenced by forecasts.
-    elevation_tile_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("elevation_tiles.id", ondelete="RESTRICT"), nullable=False
+    # Tile IDs are nullable at creation time because terrain resolution now
+    # happens in the background task.  They are populated once terrain
+    # downloads complete.  RESTRICT prevents deleting tiles that are still
+    # referenced by forecasts.
+    elevation_tile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("elevation_tiles.id", ondelete="RESTRICT"), nullable=True
     )
     land_cover_tile_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("land_cover_tiles.id", ondelete="RESTRICT"), nullable=True
     )
 
-    status: Mapped[str] = mapped_column(
-        String(30), nullable=False, default=ForecastStatus.queued, index=True
+    status: Mapped[ForecastStatus] = mapped_column(
+        SaEnum(ForecastStatus, native_enum=False, length=30, create_constraint=False),
+        nullable=False, default=ForecastStatus.queued, index=True,
     )
     weather_model: Mapped[WeatherModel] = mapped_column(
         SaEnum(WeatherModel, native_enum=False, length=10, create_constraint=False),
@@ -266,5 +270,5 @@ class Forecast(Base):
     )
 
     forecast_area: Mapped["ForecastArea | None"] = relationship(back_populates="forecasts")
-    elevation_tile: Mapped["ElevationTile"] = relationship(back_populates="forecasts")
+    elevation_tile: Mapped["ElevationTile | None"] = relationship(back_populates="forecasts")
     land_cover_tile: Mapped["LandCoverTile | None"] = relationship(back_populates="forecasts")

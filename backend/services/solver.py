@@ -226,6 +226,17 @@ def run_solver_for_forecast(
                 )
             )
 
+    except Exception:
+        logger.warning(
+            "Solver failed for forecast_id=%s; cleaning up %s and mesh cache",
+            forecast_id,
+            host_output_dir,
+        )
+        shutil.rmtree(host_output_dir, ignore_errors=True)
+        cleanup_mesh_cache(host_elevation_dir, elevation_stem)
+        raise
+
+    try:
         _write_metadata(
             host_output_dir,
             forecast_id,
@@ -236,16 +247,11 @@ def run_solver_for_forecast(
             mesh_resolution,
             vegetation,
         )
-
     except Exception:
         logger.warning(
-            "Solver failed for forecast_id=%s; cleaning up %s and mesh cache",
+            "Failed to write metadata for forecast_id=%s; solver output preserved",
             forecast_id,
-            host_output_dir,
         )
-        shutil.rmtree(host_output_dir, ignore_errors=True)
-        cleanup_mesh_cache(host_elevation_dir, elevation_stem)
-        raise
 
     elapsed = time.monotonic() - t_start
     logger.info(
