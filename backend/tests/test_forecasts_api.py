@@ -178,10 +178,12 @@ class TestRunForecastPipelineHappyPath:
             return session
         return factory
 
+    @patch("api.routers.forecasts.run_solver_for_forecast")
     @patch("api.routers.forecasts.prepare_weather_for_forecast")
     def test_status_transitions_queued_to_completed(
         self,
         mock_weather: MagicMock,
+        mock_solver: MagicMock,
         db_session: Session,
     ) -> None:
         from api.routers.forecasts import _run_forecast_pipeline
@@ -192,6 +194,7 @@ class TestRunForecastPipelineHappyPath:
         forecast_id = forecast.id
 
         mock_weather.return_value = MagicMock(timesteps=[MagicMock()] * 3)
+        mock_solver.return_value = MagicMock()
 
         with patch("api.routers.forecasts.get_session_factory") as mock_factory:
             mock_factory.return_value = self._make_non_closing_factory(db_session)
@@ -202,11 +205,14 @@ class TestRunForecastPipelineHappyPath:
         assert reloaded.started_at is not None
         assert reloaded.completed_at is not None
         mock_weather.assert_called_once()
+        mock_solver.assert_called_once()
 
+    @patch("api.routers.forecasts.run_solver_for_forecast")
     @patch("api.routers.forecasts.prepare_weather_for_forecast")
     def test_passes_correct_args_to_weather_service(
         self,
         mock_weather: MagicMock,
+        mock_solver: MagicMock,
         db_session: Session,
     ) -> None:
         from api.routers.forecasts import _run_forecast_pipeline
@@ -217,6 +223,7 @@ class TestRunForecastPipelineHappyPath:
         forecast_id = forecast.id
 
         mock_weather.return_value = MagicMock(timesteps=[])
+        mock_solver.return_value = MagicMock()
 
         with patch("api.routers.forecasts.get_session_factory") as mock_factory:
             mock_factory.return_value = self._make_non_closing_factory(db_session)
@@ -292,6 +299,62 @@ class TestRunForecastPipelineFailure:
         reloaded = db_session.get(Forecast, forecast_id)
         assert reloaded.status == ForecastStatus.failed
         assert "S3 timeout" in reloaded.error_message
+
+    @patch("api.routers.forecasts.run_solver_for_forecast")
+    @patch("api.routers.forecasts.prepare_weather_for_forecast")
+    def test_solver_config_error_sets_failed_status(
+        self,
+        mock_weather: MagicMock,
+        mock_solver: MagicMock,
+        db_session: Session,
+    ) -> None:
+        from services.solver import SolverConfigError
+
+        from api.routers.forecasts import _run_forecast_pipeline
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(db_session, elev, lcp)
+        db_session.commit()
+        forecast_id = forecast.id
+
+        mock_weather.return_value = MagicMock(timesteps=[MagicMock()])
+        mock_solver.side_effect = SolverConfigError("bad config spec")
+
+        with patch("api.routers.forecasts.get_session_factory") as mock_factory:
+            mock_factory.return_value = self._make_non_closing_factory(db_session)
+            _run_forecast_pipeline(forecast_id)
+
+        reloaded = db_session.get(Forecast, forecast_id)
+        assert reloaded.status == ForecastStatus.failed
+        assert "bad config spec" in reloaded.error_message
+
+    @patch("api.routers.forecasts.run_solver_for_forecast")
+    @patch("api.routers.forecasts.prepare_weather_for_forecast")
+    def test_solver_execution_error_sets_failed_status(
+        self,
+        mock_weather: MagicMock,
+        mock_solver: MagicMock,
+        db_session: Session,
+    ) -> None:
+        from services.solver import SolverExecutionError
+
+        from api.routers.forecasts import _run_forecast_pipeline
+
+        elev, lcp = _insert_tiles(db_session)
+        forecast = _insert_forecast(db_session, elev, lcp)
+        db_session.commit()
+        forecast_id = forecast.id
+
+        mock_weather.return_value = MagicMock(timesteps=[MagicMock()])
+        mock_solver.side_effect = SolverExecutionError("Docker crash after retries")
+
+        with patch("api.routers.forecasts.get_session_factory") as mock_factory:
+            mock_factory.return_value = self._make_non_closing_factory(db_session)
+            _run_forecast_pipeline(forecast_id)
+
+        reloaded = db_session.get(Forecast, forecast_id)
+        assert reloaded.status == ForecastStatus.failed
+        assert "Docker crash after retries" in reloaded.error_message
 
     @patch("api.routers.forecasts.prepare_weather_for_forecast")
     def test_unexpected_error_sets_failed_with_internal_error(

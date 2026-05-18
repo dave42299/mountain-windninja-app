@@ -1,7 +1,7 @@
 """Forecast HTTP routes.
 
 ``POST /forecasts`` resolves terrain, inserts the Forecast row, then launches
-a background task that fetches weather and (eventually) runs the solver.
+a background task that fetches weather and runs the WindNinja solver.
 
 **Transaction boundary contract:** ``ensure_tiles_for_forecast`` owns its own
 commits internally (one per terrain layer). The endpoint inserts and commits
@@ -32,6 +32,11 @@ from services.terrain import (
     TerrainLcpError,
     TerrainOutsideUsError,
     ensure_tiles_for_forecast,
+)
+from services.solver import (
+    SolverConfigError,
+    SolverExecutionError,
+    run_solver_for_forecast,
 )
 from services.weather import (
     WeatherDownloadError,
@@ -160,7 +165,7 @@ def _resolve_location(
 
 
 def _run_forecast_pipeline(forecast_id: uuid.UUID) -> None:
-    """Background task: fetch weather, then run solver (Phase 2 stub).
+    """Background task: fetch weather, then run the WindNinja solver.
 
     Uses its own DB session so status updates are committed independently
     of the request lifecycle.
@@ -191,14 +196,18 @@ def _run_forecast_pipeline(forecast_id: uuid.UUID) -> None:
 
         _update_status(session, forecast, ForecastStatus.running_solver)
 
-        # TODO(Phase 2 Step 5): Call solver service with weather_grids.
-        # For now, mark as completed to close the weather pipeline loop.
-        logger.info(
-            "Weather grids ready for forecast %s (%d timesteps). "
-            "Solver execution not yet implemented.",
-            forecast_id,
-            len(weather_grids.timesteps),
-        )
+        try:
+            run_solver_for_forecast(
+                forecast_id=str(forecast_id),
+                weather_grids=weather_grids,
+                elevation_tile=forecast.elevation_tile,
+                solver_type=forecast.solver_type,
+                output_wind_height=forecast.output_wind_height,
+            )
+        except (SolverConfigError, SolverExecutionError) as exc:
+            _fail_forecast(session, forecast, str(exc))
+            return
+
         _update_status(session, forecast, ForecastStatus.completed)
 
     except Exception as exc:

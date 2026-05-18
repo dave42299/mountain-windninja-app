@@ -13,13 +13,12 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from config import CONTAINER_DATA_ROOT
 from services.terrain_geometry import Wgs84BoundingBox
 
 logger = logging.getLogger(__name__)
 
 LAND_COVER_SOURCE_LANDFIRE = "landfire"
-
-_CONTAINER_DATA_ROOT = Path("/data")
 
 
 class TerrainLcpError(RuntimeError):
@@ -39,9 +38,9 @@ def _run_lcp_docker_pipeline(
     Mounts ``host_data_dir`` read-write at ``/data`` in the container.
     """
     root = host_data_dir.resolve()
-    mount = f"{root}:{_CONTAINER_DATA_ROOT.as_posix()}"
-    container_lcp = (_CONTAINER_DATA_ROOT / relative_lcp).as_posix()
-    container_prj = (_CONTAINER_DATA_ROOT / relative_lcp).with_suffix(".prj").as_posix()
+    mount = f"{root}:{CONTAINER_DATA_ROOT}"
+    container_lcp = (CONTAINER_DATA_ROOT / relative_lcp).as_posix()
+    container_prj = (CONTAINER_DATA_ROOT / relative_lcp).with_suffix(".prj").as_posix()
 
     inner_script = (
         f"fetch_dem --bbox {download.north} {download.east} {download.south} {download.west} "

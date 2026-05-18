@@ -243,8 +243,9 @@ class Forecast(Base):
         nullable=False, default=WeatherModel.hrrr,
     )
 
-    solver_type: Mapped[str] = mapped_column(
-        String(30), nullable=False, default=SolverType.momentum
+    solver_type: Mapped[SolverType] = mapped_column(
+        SaEnum(SolverType, native_enum=False, length=30, create_constraint=False),
+        nullable=False, default=SolverType.momentum,
     )
     output_wind_height: Mapped[float] = mapped_column(
         Float, nullable=False, default=10.0

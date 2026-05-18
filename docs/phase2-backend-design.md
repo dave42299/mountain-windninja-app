@@ -1,7 +1,7 @@
 # Phase 2: Backend API Design Report
 
 **Date:** May 15, 2026
-**Status:** In progress -- terrain and weather pipelines implemented and reviewed; solver execution and end-to-end integration still pending
+**Status:** In progress -- terrain, weather, and solver pipelines implemented and reviewed; output file serving endpoints and end-to-end integration still pending
 
 ## Objective
 
@@ -411,7 +411,52 @@ The weather layer turns a forecast time window + DEM tile into per-timestep spee
 
 ### Status
 
-The weather service is **complete and reviewed**. All design principles, validation, GRIB processing, grid alignment, error handling, and cleanup paths are implemented and tested (51 unit tests passing, 95 total). The forecast endpoint (``POST/GET /forecasts``) is implemented with terrain + weather + background worker. Solver execution (Phase 2 Step 5) is the remaining gap.
+The weather service is **complete and reviewed**. All design principles, validation, GRIB processing, grid alignment, error handling, and cleanup paths are implemented and tested (51 unit tests passing). The forecast endpoint (``POST/GET /forecasts``) is implemented with terrain + weather + solver + background worker.
+
+## Solver service
+
+### Design decisions
+
+- **DEM (.tif) as elevation file, not LCP.** Weather grids are aligned to the DEM's UTM CRS by the weather service. WindNinja's ``griddedInitialization`` requires forcing grids to match the elevation file's grid. Using DEM avoids a CRS rewarp step. The LCP tile is still recorded on the Forecast row for traceability. Per-pixel vegetation from LCP is replaced by a uniform ``vegetation`` parameter (default: ``trees``). TODO(Phase 4+): add LCP-aligned grid support for per-pixel vegetation.
+
+- **One Docker container per timestep.** WindNinja's ``griddedInitialization`` accepts a single timestep per config file. A 12-hour forecast = 12 solver invocations. Docker startup overhead (~1-2s) is negligible vs. solver runtime (30-120s per timestep for momentum). This also gives clean error isolation per timestep.
+
+- **Per-timestep retry with mesh cache cleanup.** The most common solver failure mode is OpenFOAM mesh corruption (AGENTS.md gotcha #1). On failure, the mesh cache is cleaned and the timestep is retried (default: 2 retries). If retries are exhausted, the entire output directory and mesh cache are cleaned up and the forecast is marked as failed.
+
+- **Diurnal winds disabled.** For ``griddedInitialization``, hourly forcing grids already capture diurnal variation. Enabling ``diurnal_winds`` would double-count slope flow effects. The reference repo's ``generate_gridded_config`` also sets ``diurnal_winds = false``.
+
+### Design principles (carried forward)
+
+- **Single public surface, layered internals.** ``solver.py`` is the only module other code imports. ``solver_config.py`` (pure .cfg generation) and ``solver_runner.py`` (Docker subprocess) are internal sub-modules.
+
+- **Typed errors for each failure mode.** ``SolverConfigError`` (invalid config inputs, maps to HTTP 502) and ``SolverExecutionError`` (Docker/WindNinja failure, maps to HTTP 502) let the API layer choose appropriate responses.
+
+- **No orphans on failure.** On any exception, the output directory is removed and the mesh cache is cleaned. A completed forecast always has output files behind it.
+
+- **Container paths vs host paths.** Config files use container paths (``/data/...``) because WindNinja runs inside Docker. The solver orchestrator maps between host and container paths using ``CONTAINER_DATA_ROOT = /data``, the same convention as ``terrain_lcp.py``.
+
+### Key invariants
+
+- All paths inside ``.cfg`` files are container paths, never host paths.
+- The mesh cache is cleaned between retry attempts and on final failure.
+- A ``Forecast`` row reaches ``completed`` only after all timesteps succeed.
+- Output files go to ``data/output/{forecast_id}/`` (convention-based, not stored in DB).
+
+### Implementation summary
+
+The solver layer turns weather forcing grids + a DEM tile into WindNinja output (speed/direction rasters at 100m resolution, KMZ files).
+
+**Config generation.** ``generate_windninja_config`` builds a single-timestep ``.cfg`` file using ``griddedInitialization``. All paths use container coordinates (``/data/...``). The config specifies ``momentum_flag = true`` for momentum solver (default) or ``false`` for mass conservation.
+
+**Docker execution.** ``execute_windninja`` runs ``WindNinja_cli`` inside the solver Docker image via ``subprocess``. The host ``data/`` directory is mounted read-write at ``/data``. OpenFOAM's bashrc is sourced with error suppression per AGENTS.md gotcha #4.
+
+**Retry and cleanup.** Each timestep is retried up to ``solver_max_retries`` times (default: 2) with mesh cache cleanup between attempts. On exhausted retries, ``run_solver_for_forecast`` removes the output directory and mesh cache, then re-raises.
+
+**Pipeline wiring.** The background worker in ``_run_forecast_pipeline`` calls ``run_solver_for_forecast`` after weather grids are prepared. Status transitions through ``fetching_weather`` → ``running_solver`` → ``completed``/``failed``.
+
+### Status
+
+The solver service is **complete and reviewed**. Config generation, Docker execution, retry logic, mesh cache cleanup, and failure handling are implemented and tested (49 solver unit tests, 156 total passing). The full forecast pipeline (terrain → weather → solver) is wired end-to-end in the background worker.
 
 ## Import Conventions
 
@@ -434,7 +479,7 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/api/main.py` | FastAPI app with lifespan, configurable CORS, router registration |
 | `backend/api/deps.py` | FastAPI dependencies: lazy DB engine (@lru_cache), session, settings |
 | `backend/api/routers/forecast_areas.py` | ForecastArea CRUD endpoints |
-| `backend/api/routers/forecasts.py` | POST/GET /forecasts with terrain resolution, background worker, weather pipeline |
+| `backend/api/routers/forecasts.py` | POST/GET /forecasts with terrain resolution, background worker, weather + solver pipeline |
 | `backend/services/terrain_geometry.py` | Pure WGS84 bbox, square construction, fractional padding, CONUS validation |
 | `backend/services/terrain_dem.py` | USGS 3DEP DEM download via py3dep, UTM reprojection |
 | `backend/services/terrain_lcp.py` | LANDFIRE LCP via Docker ``fetch_dem``, ``.prj`` sidecar generation |
@@ -442,10 +487,16 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/services/weather_models.py` | HRRR cycle resolution, time-range validation heuristics (pure datetime) |
 | `backend/services/weather_hrrr.py` | HRRR GRIB2 download via Herbie, rasterio extraction, U/V-to-speed/dir, ASCII grid writing |
 | `backend/services/weather.py` | Public weather API: validation, orchestration, metadata recording |
+| `backend/services/solver_config.py` | WindNinja .cfg generation for griddedInitialization (pure logic) |
+| `backend/services/solver_runner.py` | Docker subprocess execution, mesh cache cleanup |
+| `backend/services/solver.py` | Public solver API: per-timestep orchestration, retry, cleanup |
 | `backend/tests/test_terrain_*.py` | Terrain unit tests and optional integration (env-gated) |
 | `backend/tests/test_weather_models.py` | HRRR cycle resolution and time validation tests (21 tests) |
 | `backend/tests/test_weather_hrrr.py` | GRIB processing, U/V conversion, ASCII grid writing tests (21 tests) |
 | `backend/tests/test_weather.py` | Weather orchestrator tests: happy path, NBM rejection, cleanup (9 tests) |
+| `backend/tests/test_solver_config.py` | Config generation tests: output format, solver types, validation (23 tests) |
+| `backend/tests/test_solver_runner.py` | Docker execution and mesh cache cleanup tests (14 tests) |
+| `backend/tests/test_solver.py` | Solver orchestrator tests: happy path, retry, cleanup, ordering (12 tests) |
 | `backend/requirements.txt` | Pinned dependencies for Docker layer caching (derived from pyproject.toml) |
 | `backend/Dockerfile` | Python 3.12 image with GDAL, deps-first layer caching |
 | `docker-compose.yml` | Postgres-only (backend runs natively) |
@@ -455,6 +506,5 @@ The FastAPI lifespan handler creates the data directory structure on first start
 
 ## Remaining Work
 
-- Implement solver service (WindNinja config generation, Docker execution)
 - Implement output file serving endpoints (``GET /forecasts/{id}/output``)
 - End-to-end integration test: create forecast -> poll -> retrieve output
