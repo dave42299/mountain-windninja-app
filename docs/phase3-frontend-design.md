@@ -1,7 +1,7 @@
 # Phase 3: Frontend UI Design Report
 
 **Date:** May 21, 2026
-**Status:** Complete -- React + TypeScript SPA with CesiumJS 3D map, forecast submission, status polling, output viewer, saved locations, dark mode, and GPU-accelerated wind particle visualization. Connected to Phase 2 backend via Vite dev proxy.
+**Status:** Complete -- React + TypeScript SPA with CesiumJS 3D map, forecast submission, status polling, output viewer, saved locations, dark mode, and 3D wind vector field visualization (arrow overlay + particle animation). Connected to Phase 2 backend via Vite dev proxy.
 
 ## Objective
 
@@ -10,7 +10,7 @@ Build a responsive single-page application that lets users request wind forecast
 ## Scope Assumptions
 
 - **Single-user local dev.** No authentication. The app connects to the local backend via Vite proxy.
-- **Wind particle visualization complete (Phase 3b).** Completed forecasts display animated GPU-accelerated wind particles over 3D terrain via cesium-wind-layer, with timeline scrubber, speed legend, and show/hide toggle.
+- **Wind visualization complete (Phase 3b).** Completed forecasts display a 3D arrow vector field over terrain (primary mode) with adaptive density, plus an animated GPU-accelerated particle mode (secondary). Timeline scrubber, speed legend, visualization mode toggle, and show/hide toggle are included.
 - **Polling, not WebSocket.** TanStack Query's `refetchInterval` is sufficient for forecast status updates (forecasts take minutes). Real-time push is deferred.
 - **Cesium Ion free tier.** Provides Cesium World Terrain and Bing imagery. Token stored in `frontend/.env` (gitignored), placeholder in `.env.example`.
 
@@ -101,7 +101,9 @@ User clicks globe → CesiumMapView.onLocationSelect (globe.pick → Cartographi
       → On completed:
         → Full-width CesiumDetailMap renders with onViewerReady callback
         → useWindField(forecastId, currentTimestep, status) fetches wind data
-        → WindOverlay creates/updates WindLayer with U/V Float32Arrays
+        → WindArrowOverlay builds PolylineCollection arrows (default mode)
+          OR WindOverlay creates/updates WindLayer particles (alt mode)
+        → Visualization mode toggle switches between Arrows and Particles
         → TimelineScrubber controls currentTimestep (play/step/slider)
         → WindLegend displays speed range in mph
         → OutputViewer fetches file list
@@ -121,9 +123,11 @@ App (ErrorBoundary → QueryClientProvider → BrowserRouter → Suspense → To
     └── ForecastDetailPage (lazy)
         ├── StepIndicator (pipeline progress)
         ├── CesiumDetailMap (full-width for completed, map inset otherwise)
-        │   └── WindOverlay (cesium-wind-layer GPU particles)
+        │   ├── WindArrowOverlay (Cesium PolylineCollection arrows, default mode)
+        │   └── WindOverlay (cesium-wind-layer GPU particles, alt mode)
         ├── TimelineScrubber (play/pause/step + slider, bottom-left overlay)
         ├── WindLegend (color scale, bottom-right overlay)
+        ├── Viz mode toggle (Arrows / Particles, bottom-right overlay)
         └── OutputViewer (file table + download links)
 ```
 
@@ -205,7 +209,8 @@ App (ErrorBoundary → QueryClientProvider → BrowserRouter → Suspense → To
 | Server state | TanStack Query | 5 | Polling, caching, mutations, abort |
 | 3D Map | CesiumJS | 1.141 | 3D globe and terrain rendering |
 | Map bindings | resium | 1.21 | React wrapper for CesiumJS |
-| Wind particles | cesium-wind-layer | 0.10 | GPU-accelerated wind particle animation |
+| Wind arrows | Cesium PolylineCollection | (core) | 3D arrow vector field overlay (primary mode) |
+| Wind particles | cesium-wind-layer | 0.10 | GPU-accelerated wind particle animation (secondary mode) |
 | Vite plugin | vite-plugin-cesium-engine | 1.6 | WASM workers, assets, CSS injection |
 | UI components | shadcn/ui | latest | Radix-based accessible components |
 | Styling | Tailwind CSS | 4 | Utility-first CSS |
@@ -231,7 +236,7 @@ App (ErrorBoundary → QueryClientProvider → BrowserRouter → Suspense → To
 | `frontend/src/index.css` | Tailwind v4 + light/dark CSS variables |
 | `frontend/src/lib/utils.ts` | `cn()` class merge helper |
 | `frontend/src/lib/cesium.ts` | Cesium Ion token initialization |
-| `frontend/src/lib/cesium-utils.ts` | Shared terrain provider, domain rectangle, color constants |
+| `frontend/src/lib/cesium-utils.ts` | Shared terrain provider, domain rectangle math, color constants |
 | `frontend/src/api/types.ts` | TypeScript interfaces + `ACTIVE_STATUSES` + `isTerminalStatus` |
 | `frontend/src/api/client.ts` | Fetch wrapper with `ApiError` and abort support |
 | `frontend/src/api/forecasts.ts` | Forecast API functions |
@@ -247,9 +252,11 @@ App (ErrorBoundary → QueryClientProvider → BrowserRouter → Suspense → To
 | `frontend/src/pages/NotFoundPage.tsx` | 404 page |
 | `frontend/src/components/CesiumMapView.tsx` | CesiumJS 3D globe with click, pin, domain overlay, saved markers |
 | `frontend/src/components/CesiumDetailMap.tsx` | CesiumJS map for detail page (full-width with viewer callback for wind overlay) |
-| `frontend/src/components/WindOverlay.tsx` | Imperative cesium-wind-layer lifecycle (create/update/destroy WindLayer) |
-| `frontend/src/components/TimelineScrubber.tsx` | Play/pause, step forward/back, range slider, UTC time display |
+| `frontend/src/components/WindArrowOverlay.tsx` | 3D arrow vector field via Cesium PolylineCollection with adaptive density (default mode) |
+| `frontend/src/components/WindOverlay.tsx` | Imperative cesium-wind-layer lifecycle (create/update/destroy WindLayer, secondary mode) |
+| `frontend/src/components/TimelineScrubber.tsx` | Play/pause, step forward/back, range slider, UTC time display; graceful single-timestep handling |
 | `frontend/src/components/WindLegend.tsx` | Color gradient bar with speed labels (mph) |
+| `frontend/src/lib/wind-arrows.ts` | Grid subsampling, speed-to-color mapping, arrow geometry (shaft + arrowhead) |
 | `frontend/src/components/ForecastForm.tsx` | Zod-validated submission form |
 | `frontend/src/components/ForecastSidebar.tsx` | Recent forecasts panel + nav portal toggle |
 | `frontend/src/components/OutputViewer.tsx` | File table with type recognition + download links |
@@ -274,7 +281,9 @@ All Phase 3 and Phase 3b work is complete. The frontend provides:
 - **Error handling** via global boundary, 404 page, and toast notifications
 - **Lazy loading** for Cesium-heavy pages to keep initial bundle lean
 - **Request cancellation** via AbortController threading through TanStack Query
-- **Animated wind particle visualization** via cesium-wind-layer with GPU-accelerated rendering over 3D terrain
-- **Timeline scrubber** for navigating multi-hour forecast timesteps with play/pause animation
+- **3D arrow vector field** (default mode) via Cesium PolylineCollection with speed-based coloring, direction-aware arrows, and adaptive density based on camera zoom level
+- **Animated wind particle visualization** (secondary mode) via cesium-wind-layer with GPU-accelerated rendering, tuned for visibility (slower, thicker, longer-lived particles)
+- **Visualization mode toggle** for switching between Arrows and Particles rendering modes
+- **Timeline scrubber** for navigating multi-hour forecast timesteps with play/pause animation; always visible when wind data exists (graceful single-timestep handling)
 - **Wind speed legend** with color gradient and mph labels
-- **Show/hide wind toggle** for toggling particle layer visibility
+- **Show/hide wind toggle** for toggling wind layer visibility

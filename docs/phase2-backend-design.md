@@ -551,11 +551,11 @@ PaginatedForecastResponse
 
 - **On-demand parsing, not pre-computed.** Wind-field data is parsed from the existing WindNinja ASCII grid output files on each request rather than pre-computing and storing JSON during the solver run. This keeps the solver service unchanged and avoids storing redundant data. ASCII grid parsing is fast (milliseconds for typical grids).
 
-- **U/V in m/s for cesium-wind-layer.** The endpoint converts WindNinja output (speed in mph, direction in meteorological degrees) to U/V components in m/s. cesium-wind-layer expects U/V directly. The frontend legend converts back to mph for user display.
+- **U/V in m/s for frontend visualization.** The endpoint converts WindNinja output (speed in mph, direction in meteorological degrees) to U/V components in m/s. Both the arrow vector field overlay (Cesium PolylineCollection) and the particle animation layer (cesium-wind-layer) consume U/V directly. The frontend legend converts back to mph for user display.
 
 - **WGS84 bounds via pyproj.** WindNinja output grids are in UTM (same CRS as the DEM). The wind-field service uses `pyproj.Transformer` to convert UTM grid corners to WGS84 decimal degrees, which cesium-wind-layer needs for geographic positioning.
 
-- **Top-to-bottom row order preserved.** ESRI ASCII grids store data top-to-bottom (first row = northernmost). cesium-wind-layer also expects top-to-bottom by default (`flipY: false`), so no row reordering is needed.
+- **Top-to-bottom row order preserved.** ESRI ASCII grids store data top-to-bottom (first row = northernmost). Both the arrow overlay and cesium-wind-layer expect top-to-bottom by default (`flipY: false`), so no row reordering is needed.
 
 - **Parent weather rasters excluded.** The output directory contains both WindNinja downscaled grids and PASTCAST parent weather rasters (coarse HRRR grids). The service excludes files matching `PASTCAST-*` when globbing for output grids.
 

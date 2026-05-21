@@ -64,11 +64,13 @@ Given a lat/lon and domain size, the backend automatically:
 - Provide download links and API access to archived results
 
 ### 6. 3D Wind Visualization
-- Display wind forecast results as animated particles over 3D terrain in the browser
+- Display wind forecast results as a 3D arrow vector field over terrain in the browser (primary mode)
+- Arrows color-coded by speed (blue/cyan/green/yellow/orange/red), length proportional to magnitude, direction matching wind flow
+- Adaptive arrow density based on camera zoom level (fewer arrows when zoomed out, denser when zoomed in)
+- Alternative animated particle mode (cesium-wind-layer GPU particles) available as a toggleable option
 - Use CesiumJS for the 3D globe and terrain rendering
-- Use cesium-wind-layer for GPU-accelerated wind particle animation
-- Timeline scrubber for multi-hour forecasts
-- Color-code wind speed, show direction vectors
+- Timeline scrubber for multi-hour forecasts with play/pause and step controls
+- Wind speed legend with color gradient and mph labels
 
 ## Data Sources Reference
 
@@ -83,7 +85,7 @@ Given a lat/lon and domain size, the backend automatically:
 
 ## Technology Stack
 
-- **Frontend:** React + TypeScript, CesiumJS (via resium), cesium-wind-layer
+- **Frontend:** React + TypeScript, CesiumJS (via resium), cesium-wind-layer, Cesium PolylineCollection (arrow vector field)
 - **Backend:** Python, FastAPI, SQLAlchemy, GDAL, Herbie, rasterio
 - **Solver:** WindNinja CLI in Docker (with OpenFOAM)
 - **Cloud:** GCP or AWS (compute, storage, task queue, scheduler)

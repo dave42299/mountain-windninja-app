@@ -34,7 +34,7 @@ The project adapts and extends the existing CLI-based workflow at [Austfi/mounta
 - **Server state:** TanStack Query 5 (adaptive polling for forecast status)
 - **Forms:** React Hook Form + Zod validation
 - **3D Map:** CesiumJS (via resium) with Cesium World Terrain and Ion imagery
-- **Wind visualization:** cesium-wind-layer (GPU-accelerated particle animation over 3D terrain)
+- **Wind visualization:** Cesium PolylineCollection (3D arrow vector field, primary mode) + cesium-wind-layer (GPU particle animation, secondary mode)
 - **Component library:** shadcn/ui (Radix primitives) + Tailwind CSS v4
 - **Toasts:** sonner
 
@@ -72,10 +72,10 @@ mountain-windninja-app/
 ├── frontend/                # React + TypeScript SPA
 │   └── src/
 │       ├── pages/           # MapPage, DashboardPage, ForecastDetailPage
-│       ├── components/      # CesiumMapView, ForecastForm, SavedLocations, OutputViewer, WindOverlay, TimelineScrubber, WindLegend, etc.
+│       ├── components/      # CesiumMapView, ForecastForm, SavedLocations, OutputViewer, WindArrowOverlay, WindOverlay, TimelineScrubber, WindLegend, etc.
 │       ├── api/             # client, forecasts, forecast-areas, query-keys, types
 │       ├── hooks/           # use-forecasts, use-forecast-areas (polling + abort)
-│       ├── lib/             # cesium.ts (Ion init), cesium-utils.ts (shared), utils.ts (cn)
+│       ├── lib/             # cesium.ts (Ion init), cesium-utils.ts (shared), wind-arrows.ts (arrow geometry), utils.ts (cn)
 │       └── types/           # map.ts (SelectedLocation, SavedLocationMarker)
 ├── solver/                  # Placeholder Dockerfile + scripts/.gitkeep
 ├── infra/                   # Terraform stub (main.tf with Phase 4 comments)
@@ -182,12 +182,25 @@ Full design in the plan file. Backend + frontend implemented:
 - `services/wind_field.py` — ASC grid parsing, meteorological direction→U/V conversion, UTM→WGS84 bounds
 - Full test suite in `tests/test_wind_field.py`
 
-**Frontend:**
-- `WindFieldResponse` type, `getWindField()` API function, `useWindField` hook with `staleTime: Infinity` (immutable per-timestep data)
+**Frontend (two visualization modes):**
+
+*Arrow vector field (default mode):*
+- `WindArrowOverlay` — renders wind vectors as colored polyline arrows (shaft + V-shaped arrowhead) via Cesium `PolylineCollection` primitive
+- Adaptive density based on camera altitude (every 8th cell when zoomed out, full grid when zoomed in)
+- Speed-based color gradient (blue → cyan → green → yellow → orange → red) matching the WindLegend
+- Arrow length proportional to wind speed, direction computed from U/V components
+- `lib/wind-arrows.ts` — utility module with subsampling logic, color mapping, and arrow geometry math
+
+*Particle animation (secondary mode):*
 - `WindOverlay` — imperative cesium-wind-layer `WindLayer` lifecycle with two-effect pattern (create/destroy on viewer, updateWindData on timestep change)
-- `TimelineScrubber` — play/pause, step forward/back, range slider, formatted UTC time display
+- Tuned particle parameters for visibility: slower animation speed, thicker/longer-lived particles
+
+*Shared:*
+- `WindFieldResponse` type, `getWindField()` API function, `useWindField` hook with `staleTime: Infinity` (immutable per-timestep data)
+- `TimelineScrubber` — play/pause, step forward/back, range slider, formatted UTC time display; always visible when wind data exists (graceful single-timestep handling)
 - `WindLegend` — color gradient bar with mph speed labels
-- `ForecastDetailPage` integration: full-width 450px CesiumJS map for completed forecasts with wind particle overlay, timeline, legend, and show/hide toggle
+- Visualization mode toggle (Arrows / Particles) on the map overlay
+- `ForecastDetailPage` integration: full-width 450px CesiumJS map for completed forecasts with wind overlay, timeline, legend, mode toggle, and show/hide toggle
 
 ---
 
@@ -206,7 +219,7 @@ These items were scoped for Phases 1-3 but are intentionally deferred or partial
 
 ### Phase 3b -- Wind visualization (complete)
 
-**Goal:** Display completed WindNinja output as animated wind particles over 3D terrain in the browser.
+**Goal:** Display completed WindNinja output as an interactive 3D wind vector field over terrain in the browser, with an alternative particle animation mode.
 
 **Backend:**
 - `GET /forecasts/{id}/wind-field/{timestep}` endpoint parses WindNinja ASCII grid output (speed + direction), converts to U/V (m/s), computes WGS84 bounds via pyproj, returns JSON
@@ -215,10 +228,13 @@ These items were scoped for Phases 1-3 but are intentionally deferred or partial
 
 **Frontend:**
 - `WindFieldResponse` type, `getWindField()` API function, `useWindField` hook (enabled only when status is `completed`, `staleTime: Infinity` for immutable data)
-- `WindOverlay` component manages imperative `WindLayer` lifecycle with two-effect pattern (create/destroy on viewer change, updateWindData on timestep change)
-- `TimelineScrubber` component with play/pause, step forward/back, range slider, and formatted UTC time display
-- `WindLegend` component with color gradient bar and mph speed labels
-- ForecastDetailPage integration: full-width 450px CesiumJS map for completed forecasts, wind overlay, timeline scrubber, legend, and show/hide toggle
+- `WindArrowOverlay` — 3D arrow vector field via Cesium `PolylineCollection` (default mode); adaptive density via camera altitude listener; speed-colored arrows with direction from U/V
+- `WindOverlay` — cesium-wind-layer GPU particle animation (secondary mode); tuned for visibility (slower, thicker, longer-lived particles)
+- `TimelineScrubber` — play/pause, step forward/back, range slider, formatted UTC time; always shown when wind data exists
+- `WindLegend` — color gradient bar with mph speed labels
+- Visualization mode toggle (Arrows / Particles) for switching between rendering modes
+- `lib/wind-arrows.ts` — grid subsampling, color mapping, and arrow geometry utilities
+- ForecastDetailPage integration: full-width 450px CesiumJS map for completed forecasts, dual-mode wind overlay, timeline scrubber, legend, mode toggle, and show/hide toggle
 
 ### Phase 4 -- Cloud deployment and solver orchestration
 
