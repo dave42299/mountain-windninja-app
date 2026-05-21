@@ -50,50 +50,56 @@ export default function TimelineScrubber({
     ? format(new Date(validTime), "MMM d, yyyy HH:mm 'UTC'")
     : `Timestep ${currentTimestep + 1}`;
 
+  const hasMultipleTimesteps = timestepCount > 1;
+
   return (
     <div className="flex items-center gap-2 rounded-lg border bg-background/90 px-3 py-2 shadow-md backdrop-blur-sm">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7"
-        onClick={stepBack}
-        aria-label="Previous timestep"
-      >
-        <ChevronLeft className="h-4 w-4" />
-      </Button>
+      {hasMultipleTimesteps && (
+        <>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={stepBack}
+            aria-label="Previous timestep"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
 
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7"
-        onClick={onPlayToggle}
-        aria-label={isPlaying ? "Pause" : "Play"}
-      >
-        {isPlaying ? (
-          <Pause className="h-4 w-4" />
-        ) : (
-          <Play className="h-4 w-4" />
-        )}
-      </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={onPlayToggle}
+            aria-label={isPlaying ? "Pause" : "Play"}
+          >
+            {isPlaying ? (
+              <Pause className="h-4 w-4" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+          </Button>
 
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7"
-        onClick={stepForward}
-        aria-label="Next timestep"
-      >
-        <ChevronRight className="h-4 w-4" />
-      </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={stepForward}
+            aria-label="Next timestep"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
 
-      <input
-        type="range"
-        min={0}
-        max={timestepCount - 1}
-        value={currentTimestep}
-        onChange={(e) => onTimestepChange(Number(e.target.value))}
-        className="mx-2 h-1.5 w-32 cursor-pointer appearance-none rounded-full bg-muted accent-primary sm:w-48"
-      />
+          <input
+            type="range"
+            min={0}
+            max={timestepCount - 1}
+            value={currentTimestep}
+            onChange={(e) => onTimestepChange(Number(e.target.value))}
+            className="mx-2 h-1.5 w-32 cursor-pointer appearance-none rounded-full bg-muted accent-primary sm:w-48"
+          />
+        </>
+      )}
 
       <span className="min-w-[140px] text-xs text-muted-foreground">
         {formattedTime}

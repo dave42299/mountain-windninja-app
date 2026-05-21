@@ -1,7 +1,15 @@
 import { useState, useCallback, useRef } from "react";
 import { useParams, useNavigate, Navigate } from "react-router";
 import { format } from "date-fns";
-import { ArrowLeft, AlertCircle, SearchX, Wind, EyeOff } from "lucide-react";
+import {
+  ArrowLeft,
+  AlertCircle,
+  SearchX,
+  Wind,
+  EyeOff,
+  ArrowUpRight,
+  Waves,
+} from "lucide-react";
 import type { Viewer as CesiumViewer } from "cesium";
 
 import { Button } from "@/components/ui/button";
@@ -18,10 +26,13 @@ import StepIndicator from "@/components/StepIndicator";
 import CesiumDetailMap from "@/components/CesiumDetailMap";
 import OutputViewer from "@/components/OutputViewer";
 import WindOverlay from "@/components/WindOverlay";
+import WindArrowOverlay from "@/components/WindArrowOverlay";
 import TimelineScrubber from "@/components/TimelineScrubber";
 import WindLegend from "@/components/WindLegend";
 import { useForecast, useWindField } from "@/hooks/use-forecasts";
 import { ACTIVE_STATUSES } from "@/api/types";
+
+type WindVizMode = "arrows" | "particles";
 
 export default function ForecastDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -31,6 +42,7 @@ export default function ForecastDetailPage() {
   const [currentTimestep, setCurrentTimestep] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [windVisible, setWindVisible] = useState(true);
+  const [windVizMode, setWindVizMode] = useState<WindVizMode>("arrows");
   const viewerRef = useRef<CesiumViewer | null>(null);
 
   const isCompleted = forecast?.status === "completed";
@@ -152,15 +164,24 @@ export default function ForecastDetailPage() {
               />
             </div>
 
-            <WindOverlay
-              viewer={viewerRef.current}
-              windData={windData ?? null}
-              visible={windVisible}
-              particleHeight={forecast.output_wind_height}
-            />
+            {windVizMode === "arrows" ? (
+              <WindArrowOverlay
+                viewer={viewerRef.current}
+                windData={windData ?? null}
+                visible={windVisible}
+                altitudeOffset={forecast.output_wind_height}
+              />
+            ) : (
+              <WindOverlay
+                viewer={viewerRef.current}
+                windData={windData ?? null}
+                visible={windVisible}
+                particleHeight={forecast.output_wind_height}
+              />
+            )}
 
             <div className="absolute bottom-3 left-3 z-10">
-              {windData && windData.timestep_count > 1 && (
+              {windData && (
                 <TimelineScrubber
                   timestepCount={windData.timestep_count}
                   currentTimestep={currentTimestep}
@@ -179,6 +200,26 @@ export default function ForecastDetailPage() {
                   speedMaxMps={windData.speed_max}
                 />
               )}
+              <div className="flex gap-1">
+                <Button
+                  variant={windVizMode === "arrows" ? "default" : "outline"}
+                  size="sm"
+                  className="gap-1.5 bg-background/90 backdrop-blur-sm"
+                  onClick={() => setWindVizMode("arrows")}
+                >
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                  Arrows
+                </Button>
+                <Button
+                  variant={windVizMode === "particles" ? "default" : "outline"}
+                  size="sm"
+                  className="gap-1.5 bg-background/90 backdrop-blur-sm"
+                  onClick={() => setWindVizMode("particles")}
+                >
+                  <Waves className="h-3.5 w-3.5" />
+                  Particles
+                </Button>
+              </div>
               <Button
                 variant="outline"
                 size="sm"

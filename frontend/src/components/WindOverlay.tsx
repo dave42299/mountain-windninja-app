@@ -65,13 +65,13 @@ export default function WindOverlay({
       windLayerRef.current.updateWindData(data);
     } else {
       windLayerRef.current = new WindLayer(viewer, data, {
-        particlesTextureSize: 128,
+        particlesTextureSize: 64,
         particleHeight,
-        lineWidth: { min: 1, max: 4 },
-        lineLength: { min: 20, max: 100 },
-        speedFactor: 4.0,
-        dropRate: 0.003,
-        dropRateBump: 0.001,
+        lineWidth: { min: 2, max: 6 },
+        lineLength: { min: 40, max: 200 },
+        speedFactor: 1.0,
+        dropRate: 0.01,
+        dropRateBump: 0.005,
         colors: WIND_COLORS,
         flipY: false,
         useViewerBounds: false,
