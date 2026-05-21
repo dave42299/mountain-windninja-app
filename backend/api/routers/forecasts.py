@@ -31,7 +31,6 @@ from models.schemas import (
     ForecastResponse,
     OutputFileInfo,
     PaginatedForecastResponse,
-    WindFieldBounds,
     WindFieldResponse,
 )
 from services.terrain import (
@@ -293,12 +292,7 @@ def get_wind_field(
         valid_time=wind_data.valid_time,
         width=wind_data.width,
         height=wind_data.height,
-        bounds=WindFieldBounds(
-            west=wind_data.bounds.west,
-            south=wind_data.bounds.south,
-            east=wind_data.bounds.east,
-            north=wind_data.bounds.north,
-        ),
+        bounds=wind_data.bounds,
         u=wind_data.u,
         v=wind_data.v,
         speed_min=wind_data.speed_min,

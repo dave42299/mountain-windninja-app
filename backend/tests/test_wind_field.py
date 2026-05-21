@@ -24,8 +24,8 @@ from sqlalchemy.orm import Session
 
 from config import Settings
 from models.enums import ForecastStatus
+from models.schemas import WindFieldBounds
 from services.wind_field import (
-    WindFieldBounds,
     WindFieldGridError,
     WindFieldMetadataError,
     WindFieldTimestepError,
@@ -448,6 +448,50 @@ class TestLoadWindField:
         )
 
         with pytest.raises(WindFieldGridError, match="Direction grid not found"):
+            load_wind_field(tmp_path, timestep_index=0)
+
+    def test_timestep_count_from_vel_files_not_metadata(self, tmp_path: Path) -> None:
+        """timestep_count follows discovered *_vel.asc files, not metadata."""
+        _make_metadata(
+            tmp_path,
+            timestep_count=99,
+            valid_times=[
+                "2026-05-15T06:00:00+00:00",
+                "2026-05-15T07:00:00+00:00",
+            ],
+        )
+        _write_test_grids(tmp_path, stem="test_100_20260515T0600")
+        _write_test_grids(tmp_path, stem="test_100_20260515T0700")
+
+        result = load_wind_field(tmp_path, timestep_index=0)
+        assert result.timestep_count == 2
+
+    def test_more_vel_files_than_metadata_valid_times_raises(
+        self, tmp_path: Path,
+    ) -> None:
+        _make_metadata(
+            tmp_path,
+            timestep_count=1,
+            valid_times=["2026-05-15T06:00:00+00:00"],
+        )
+        _write_test_grids(tmp_path, stem="test_100_20260515T0600")
+        _write_test_grids(tmp_path, stem="test_100_20260515T0700")
+
+        load_wind_field(tmp_path, timestep_index=0)
+        with pytest.raises(WindFieldGridError, match="No valid_time in metadata"):
+            load_wind_field(tmp_path, timestep_index=1)
+
+    def test_mismatched_vel_ang_grid_dimensions(self, tmp_path: Path) -> None:
+        _make_metadata(tmp_path, timestep_count=1, valid_times=["2026-05-15T06:00:00+00:00"])
+        vel_path, ang_path = _write_test_grids(
+            tmp_path, stem="test_100_20260515T0600", ncols=3, nrows=2,
+        )
+        ang_path.write_text(
+            _make_ascii_grid(ncols=3, nrows=3, data=[[0.0] * 3] * 3),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(WindFieldGridError, match="differ in size"):
             load_wind_field(tmp_path, timestep_index=0)
 
 

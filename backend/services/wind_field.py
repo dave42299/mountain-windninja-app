@@ -22,6 +22,8 @@ from pathlib import Path
 
 from pyproj import Transformer
 
+from models.schemas import WindFieldBounds
+
 logger = logging.getLogger(__name__)
 
 MPH_TO_MPS = 0.44704
@@ -43,16 +45,6 @@ class WindFieldGridError(WindFieldError):
 
 class WindFieldTimestepError(WindFieldError):
     """Requested timestep index is out of range."""
-
-
-@dataclass(frozen=True)
-class WindFieldBounds:
-    """WGS84 bounding box (decimal degrees)."""
-
-    west: float
-    south: float
-    east: float
-    north: float
 
 
 @dataclass(frozen=True)
@@ -104,7 +96,7 @@ def load_wind_field(
     """
     metadata = _read_metadata(output_dir)
     crs_epsg: int = metadata["elevation_crs_epsg"]
-    timestep_count: int = metadata["timestep_count"]
+    metadata_timestep_count: int = metadata["timestep_count"]
     valid_times = [
         datetime.fromisoformat(ts["valid_time"])
         for ts in metadata["timesteps"]
@@ -117,14 +109,25 @@ def load_wind_field(
             f"No WindNinja velocity output (*_vel.asc) found in {output_dir}"
         )
 
-    if timestep_index < 0 or timestep_index >= len(vel_files):
+    timestep_count = len(vel_files)
+    if metadata_timestep_count != timestep_count:
+        logger.warning(
+            "metadata.json timestep_count=%d does not match %d *_vel.asc files in %s",
+            metadata_timestep_count,
+            timestep_count,
+            output_dir,
+        )
+
+    if timestep_index < 0 or timestep_index >= timestep_count:
         raise WindFieldTimestepError(
             f"Timestep index {timestep_index} out of range "
-            f"(0..{len(vel_files) - 1})"
+            f"(0..{timestep_count - 1})"
         )
 
     vel_path = vel_files[timestep_index]
-    ang_path = Path(str(vel_path).replace("_vel.asc", "_ang.asc"))
+    ang_path = vel_path.with_name(
+        vel_path.name.replace("_vel.asc", "_ang.asc")
+    )
 
     if not ang_path.is_file():
         raise WindFieldGridError(
@@ -132,10 +135,28 @@ def load_wind_field(
             f"(expected alongside {vel_path.name})"
         )
 
-    valid_time = valid_times[timestep_index] if timestep_index < len(valid_times) else valid_times[-1]
+    if timestep_index >= len(valid_times):
+        raise WindFieldGridError(
+            f"No valid_time in metadata.json for timestep index {timestep_index} "
+            f"(metadata has {len(valid_times)} timesteps, "
+            f"{timestep_count} velocity grids on disk)"
+        )
+    valid_time = valid_times[timestep_index]
 
     speed_header, speed_data = _parse_ascii_grid(vel_path)
-    _, direction_data = _parse_ascii_grid(ang_path)
+    direction_header, direction_data = _parse_ascii_grid(ang_path)
+
+    if (
+        speed_header.ncols != direction_header.ncols
+        or speed_header.nrows != direction_header.nrows
+        or len(speed_data) != len(direction_data)
+    ):
+        raise WindFieldGridError(
+            f"Velocity and direction grids differ in size for timestep "
+            f"{vel_path.name}: vel {speed_header.ncols}x{speed_header.nrows} "
+            f"({len(speed_data)} values), ang {direction_header.ncols}x"
+            f"{direction_header.nrows} ({len(direction_data)} values)"
+        )
 
     u, v, speed_min, speed_max = _convert_speed_direction_to_uv(
         speed_data, direction_data, speed_header.nodata_value,
