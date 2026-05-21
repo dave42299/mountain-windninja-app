@@ -20,7 +20,7 @@ import {
   useCreateForecastArea,
   useDeleteForecastArea,
 } from "@/hooks/use-forecast-areas";
-import type { SelectedLocation } from "@/components/MapView";
+import type { SelectedLocation } from "@/types/map";
 import type { ForecastAreaResponse } from "@/api/types";
 
 interface SavedLocationsProps {

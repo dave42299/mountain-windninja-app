@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import MapView, { type SelectedLocation } from "@/components/MapView";
+import CesiumMapView from "@/components/CesiumMapView";
+import type { SelectedLocation } from "@/types/map";
 import ForecastForm from "@/components/ForecastForm";
 import ForecastSidebar from "@/components/ForecastSidebar";
 import SavedLocations from "@/components/SavedLocations";
@@ -53,7 +54,7 @@ export default function MapPage() {
 
   return (
     <div className="relative h-full">
-      <MapView
+      <CesiumMapView
         selectedLocation={selectedLocation}
         onLocationSelect={handleLocationSelect}
         domainSizeKm={domainSizeKm}

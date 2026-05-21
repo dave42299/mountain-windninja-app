@@ -17,7 +17,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { useCreateForecast } from "@/hooks/use-forecasts";
 import { SaveLocationButton } from "@/components/SavedLocations";
-import type { SelectedLocation } from "@/components/MapView";
+import type { SelectedLocation } from "@/types/map";
 
 const forecastSchema = z.object({
   size_km: z.coerce.number().min(1).max(50),

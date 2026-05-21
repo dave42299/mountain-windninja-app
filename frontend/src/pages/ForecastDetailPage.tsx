@@ -13,7 +13,7 @@ import {
 import { ApiError } from "@/api/client";
 import StatusBadge from "@/components/StatusBadge";
 import StepIndicator from "@/components/StepIndicator";
-import ForecastDetailMap from "@/components/ForecastDetailMap";
+import CesiumDetailMap from "@/components/CesiumDetailMap";
 import OutputViewer from "@/components/OutputViewer";
 import { useForecast } from "@/hooks/use-forecasts";
 
@@ -185,7 +185,7 @@ export default function ForecastDetailPage() {
           </CardHeader>
           <CardContent>
             <div className="h-64 overflow-hidden rounded-md border">
-              <ForecastDetailMap
+              <CesiumDetailMap
                 latitude={forecast.center_latitude}
                 longitude={forecast.center_longitude}
                 sizeKm={forecast.size_km}
