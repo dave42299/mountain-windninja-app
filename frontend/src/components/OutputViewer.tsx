@@ -153,7 +153,7 @@ function FileRow({
         </div>
       </td>
       <td className="px-3 py-2 text-xs text-muted-foreground">
-        {typeLabel ?? getFileExtension(file.filename) || "—"}
+        {typeLabel ?? (getFileExtension(file.filename) || "—")}
       </td>
       <td className="px-3 py-2 text-right text-xs text-muted-foreground">
         {formatBytes(file.size_bytes)}
