@@ -44,7 +44,8 @@ export default function AppLayout() {
           })}
         </nav>
 
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          <div id="nav-portal" />
           <ThemeToggle />
         </div>
       </header>
