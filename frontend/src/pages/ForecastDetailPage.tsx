@@ -1,9 +1,30 @@
-import { useParams } from "react-router";
-import { Wind } from "lucide-react";
+import { useParams, useNavigate } from "react-router";
+import { format } from "date-fns";
+import { ArrowLeft, AlertCircle } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import StatusBadge from "@/components/StatusBadge";
+import StepIndicator from "@/components/StepIndicator";
+import ForecastDetailMap from "@/components/ForecastDetailMap";
 import { useForecast } from "@/hooks/use-forecasts";
+
+const ACTIVE_STATUSES = new Set([
+  "queued",
+  "fetching_terrain",
+  "fetching_weather",
+  "running_solver",
+]);
 
 export default function ForecastDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { data: forecast, isLoading, error } = useForecast(id);
 
   if (isLoading) {
@@ -16,46 +37,146 @@ export default function ForecastDetailPage() {
 
   if (error || !forecast) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-col items-center justify-center gap-3">
         <p className="text-sm text-destructive">
           {error?.message ?? "Forecast not found"}
         </p>
+        <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
+          Go back
+        </Button>
       </div>
     );
   }
 
+  const isActive = ACTIVE_STATUSES.has(forecast.status);
+
   return (
-    <div className="mx-auto max-w-3xl p-6">
-      <div className="flex items-center gap-3">
-        <Wind className="h-6 w-6" />
-        <h1 className="text-2xl font-bold">Forecast Detail</h1>
-      </div>
-      <div className="mt-6 space-y-2 text-sm">
-        <p>
-          <span className="font-medium">Status:</span> {forecast.status}
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-4xl p-6">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mb-4 gap-1.5"
+          onClick={() => navigate(-1)}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </Button>
+
+        <div className="flex items-center gap-3">
+          <StatusBadge status={forecast.status} className="text-sm px-3 py-1" />
+          <h1 className="text-2xl font-bold">Forecast</h1>
+        </div>
+
+        <p className="mt-1 font-mono text-sm text-muted-foreground">
+          {forecast.center_latitude.toFixed(5)},{" "}
+          {forecast.center_longitude.toFixed(5)}
         </p>
-        <p>
-          <span className="font-medium">Location:</span>{" "}
-          {forecast.center_latitude.toFixed(4)},{" "}
-          {forecast.center_longitude.toFixed(4)}
-        </p>
-        <p>
-          <span className="font-medium">Model:</span> {forecast.weather_model}
-        </p>
-        <p>
-          <span className="font-medium">Solver:</span> {forecast.solver_type}
-        </p>
-        <p>
-          <span className="font-medium">Duration:</span>{" "}
-          {forecast.duration_hours}h
-        </p>
-        {forecast.error_message && (
-          <p className="text-destructive">
-            <span className="font-medium">Error:</span>{" "}
-            {forecast.error_message}
-          </p>
+
+        {isActive && (
+          <Card className="mt-6">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Progress</CardTitle>
+              <CardDescription>Pipeline is running...</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <StepIndicator currentStatus={forecast.status} />
+            </CardContent>
+          </Card>
         )}
+
+        {forecast.status === "failed" && forecast.error_message && (
+          <div className="mt-6 flex items-start gap-3 rounded-lg border border-destructive/50 bg-destructive/5 p-4">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+            <div>
+              <p className="text-sm font-medium text-destructive">
+                Forecast failed
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {forecast.error_message}
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-6 grid gap-6 md:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Configuration</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <Row label="Weather model" value={forecast.weather_model.toUpperCase()} />
+              <Row
+                label="Solver"
+                value={
+                  forecast.solver_type === "momentum"
+                    ? "Momentum (OpenFOAM)"
+                    : "Mass Conservation"
+                }
+              />
+              <Row label="Wind height" value={`${forecast.output_wind_height} m`} />
+              <Row label="Domain size" value={`${forecast.size_km} km`} />
+              <Row label="Duration" value={`${forecast.duration_hours} hours`} />
+              <Row
+                label="Forecast start"
+                value={format(new Date(forecast.forecast_start), "MMM d, yyyy HH:mm")}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Timestamps</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <Row
+                label="Created"
+                value={format(new Date(forecast.created_at), "MMM d, yyyy HH:mm:ss")}
+              />
+              {forecast.started_at && (
+                <Row
+                  label="Started"
+                  value={format(new Date(forecast.started_at), "MMM d, yyyy HH:mm:ss")}
+                />
+              )}
+              {forecast.completed_at && (
+                <Row
+                  label="Completed"
+                  value={format(new Date(forecast.completed_at), "MMM d, yyyy HH:mm:ss")}
+                />
+              )}
+              <Row
+                label="Last updated"
+                value={format(new Date(forecast.updated_at), "MMM d, yyyy HH:mm:ss")}
+              />
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="mt-6">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Location</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-64 overflow-hidden rounded-md border">
+              <ForecastDetailMap
+                latitude={forecast.center_latitude}
+                longitude={forecast.center_longitude}
+                sizeKm={forecast.size_km}
+              />
+            </div>
+          </CardContent>
+        </Card>
       </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium">{value}</span>
     </div>
   );
 }
