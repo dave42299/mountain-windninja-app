@@ -98,6 +98,8 @@ export default function MapPage() {
 function SavedNavButton({
   onSelectLocation,
 }: {
+  isOpen: boolean;
+  onToggle: () => void;
   onSelectLocation: (location: SelectedLocation, sizeKm: number) => void;
 }) {
   const portalTarget = document.getElementById("nav-portal");
