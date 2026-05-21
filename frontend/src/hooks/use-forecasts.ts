@@ -4,6 +4,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { ForecastCreate, ForecastStatus } from "@/api/types";
+import { isTerminalStatus } from "@/api/types";
 import {
   createForecast,
   getForecast,
@@ -12,17 +13,6 @@ import {
   type ListForecastsParams,
 } from "@/api/forecasts";
 import { queryKeys } from "@/api/query-keys";
-
-const ACTIVE_STATUSES: Set<ForecastStatus> = new Set([
-  "queued",
-  "fetching_terrain",
-  "fetching_weather",
-  "running_solver",
-]);
-
-function isTerminalStatus(status: ForecastStatus): boolean {
-  return !ACTIVE_STATUSES.has(status);
-}
 
 function pollingIntervalForStatus(
   status: ForecastStatus | undefined,
@@ -44,7 +34,7 @@ function pollingIntervalForStatus(
 export function useForecasts(params: ListForecastsParams = {}) {
   return useQuery({
     queryKey: queryKeys.forecasts.list(params),
-    queryFn: () => listForecasts(params),
+    queryFn: ({ signal }) => listForecasts(params, signal),
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return 5_000;
@@ -59,7 +49,7 @@ export function useForecasts(params: ListForecastsParams = {}) {
 export function useForecast(id: string | undefined) {
   return useQuery({
     queryKey: queryKeys.forecasts.detail(id),
-    queryFn: () => getForecast(id!),
+    queryFn: ({ signal }) => getForecast(id!, signal),
     enabled: !!id,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
@@ -84,7 +74,7 @@ export function useForecastOutput(
 ) {
   return useQuery({
     queryKey: queryKeys.forecasts.output(forecastId),
-    queryFn: () => getForecastOutput(forecastId!),
+    queryFn: ({ signal }) => getForecastOutput(forecastId!, signal),
     enabled: !!forecastId && status === "completed",
   });
 }

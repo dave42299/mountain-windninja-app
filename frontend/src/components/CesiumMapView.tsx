@@ -12,14 +12,21 @@ import {
   Cartesian3,
   Cartographic,
   Color,
-  createWorldTerrainAsync,
+  HeightReference,
   Math as CesiumMath,
-  Rectangle,
   ScreenSpaceEventType,
   UrlTemplateImageryProvider,
   type Viewer as CesiumViewer,
 } from "cesium";
 import type { SelectedLocation, SavedLocationMarker } from "@/types/map";
+import {
+  terrainProvider,
+  buildDomainRectangle,
+  DOMAIN_FILL_COLOR,
+  DOMAIN_OUTLINE_COLOR,
+  PIN_COLOR,
+  SAVED_MARKER_COLOR,
+} from "@/lib/cesium-utils";
 
 interface CesiumMapViewProps {
   selectedLocation: SelectedLocation | null;
@@ -35,13 +42,6 @@ const INITIAL_ORIENTATION = {
   roll: 0,
 };
 
-const DOMAIN_FILL_COLOR = Color.fromCssColorString("#3b82f6").withAlpha(0.08);
-const DOMAIN_OUTLINE_COLOR = Color.fromCssColorString("#3b82f6");
-const PIN_COLOR = Color.fromCssColorString("#3b82f6");
-const SAVED_COLOR = Color.fromCssColorString("#3b82f6").withAlpha(0.6);
-
-const terrainProvider = createWorldTerrainAsync();
-
 export default function CesiumMapView({
   selectedLocation,
   onLocationSelect,
@@ -55,7 +55,6 @@ export default function CesiumMapView({
     if (!viewer || hasInitialized.current) return;
     hasInitialized.current = true;
 
-    // Dev-only: Expose the viewer to the window for debugging
     if (import.meta.env.DEV) {
       (window as unknown as Record<string, unknown>).__cesiumViewer = viewer;
     }
@@ -111,7 +110,6 @@ export default function CesiumMapView({
         ? Cartesian3.fromDegrees(
             selectedLocation.longitude,
             selectedLocation.latitude,
-            50,
           )
         : null,
     [selectedLocation],
@@ -147,14 +145,15 @@ export default function CesiumMapView({
       {savedLocations.map((loc) => (
         <Entity
           key={loc.id}
-          position={Cartesian3.fromDegrees(loc.longitude, loc.latitude, 20)}
+          position={Cartesian3.fromDegrees(loc.longitude, loc.latitude)}
           name={loc.label ?? undefined}
         >
           <PointGraphics
             pixelSize={10}
-            color={SAVED_COLOR}
+            color={SAVED_MARKER_COLOR}
             outlineColor={Color.WHITE}
             outlineWidth={2}
+            heightReference={HeightReference.CLAMP_TO_GROUND}
           />
         </Entity>
       ))}
@@ -166,6 +165,7 @@ export default function CesiumMapView({
             color={PIN_COLOR}
             outlineColor={Color.WHITE}
             outlineWidth={3}
+            heightReference={HeightReference.CLAMP_TO_GROUND}
           />
         </Entity>
       )}
@@ -183,22 +183,5 @@ export default function CesiumMapView({
         </Entity>
       )}
     </Viewer>
-  );
-}
-
-function buildDomainRectangle(
-  latitude: number,
-  longitude: number,
-  sizeKm: number,
-): Rectangle {
-  const halfKm = sizeKm / 2;
-  const latDelta = halfKm / 111.32;
-  const lonDelta = halfKm / (111.32 * Math.cos((latitude * Math.PI) / 180));
-
-  return Rectangle.fromDegrees(
-    longitude - lonDelta,
-    latitude - latDelta,
-    longitude + lonDelta,
-    latitude + latDelta,
   );
 }

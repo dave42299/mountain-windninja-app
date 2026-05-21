@@ -34,25 +34,34 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function get<T>(path: string): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`);
+export async function get<T>(
+  path: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  const response = await fetch(`${BASE_URL}${path}`, { signal });
   return handleResponse<T>(response);
 }
 
-export async function post<T>(path: string, body: unknown): Promise<T> {
+export async function post<T>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   return handleResponse<T>(response);
 }
 
-export async function del<T = void>(path: string): Promise<T> {
+export async function del(path: string, signal?: AbortSignal): Promise<void> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "DELETE",
+    signal,
   });
-  return handleResponse<T>(response);
+  await handleResponse<void>(response);
 }
 
 export function buildDownloadUrl(path: string): string {

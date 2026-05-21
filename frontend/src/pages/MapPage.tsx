@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import CesiumMapView from "@/components/CesiumMapView";
 import type { SelectedLocation } from "@/types/map";
@@ -8,6 +8,11 @@ import SavedLocations from "@/components/SavedLocations";
 import { useForecastAreas } from "@/hooks/use-forecast-areas";
 import { Bookmark } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Sheet,
   SheetContent,
@@ -22,7 +27,6 @@ export default function MapPage() {
   const [domainSizeKm, setDomainSizeKm] = useState(12);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isLocationsOpen, setIsLocationsOpen] = useState(false);
 
   const { data: areas } = useForecastAreas();
 
@@ -44,7 +48,6 @@ export default function MapPage() {
   ) => {
     setSelectedLocation(location);
     setDomainSizeKm(sizeKm);
-    setIsLocationsOpen(false);
     setIsFormOpen(true);
   };
 
@@ -61,11 +64,7 @@ export default function MapPage() {
         savedLocations={savedMarkers}
       />
 
-      <SavedNavButton
-        isOpen={isLocationsOpen}
-        onToggle={() => setIsLocationsOpen(!isLocationsOpen)}
-        onSelectLocation={handleSavedLocationSelect}
-      />
+      <SavedNavButton onSelectLocation={handleSavedLocationSelect} />
 
       <ForecastSidebar
         isOpen={isSidebarOpen}
@@ -97,44 +96,29 @@ export default function MapPage() {
 }
 
 function SavedNavButton({
-  isOpen,
-  onToggle,
   onSelectLocation,
 }: {
-  isOpen: boolean;
-  onToggle: () => void;
   onSelectLocation: (location: SelectedLocation, sizeKm: number) => void;
 }) {
   const portalTarget = document.getElementById("nav-portal");
-  const buttonRef = useRef<HTMLButtonElement>(null);
 
   if (!portalTarget) return null;
 
-  return (
-    <>
-      {createPortal(
-        <div className="relative">
-          <Button
-            ref={buttonRef}
-            variant="ghost"
-            size="sm"
-            className="gap-1.5"
-            onClick={onToggle}
-          >
-            <Bookmark className="h-4 w-4" />
-            Saved
-          </Button>
-          {isOpen && (
-            <div className="absolute right-0 top-full mt-2 w-64 rounded-lg border bg-background shadow-lg">
-              <div className="px-3 py-2">
-                <span className="text-xs font-semibold">Saved Locations</span>
-              </div>
-              <SavedLocations onSelectLocation={onSelectLocation} />
-            </div>
-          )}
-        </div>,
-        portalTarget,
-      )}
-    </>
+  return createPortal(
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" className="gap-1.5">
+          <Bookmark className="h-4 w-4" />
+          Saved
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 p-0">
+        <div className="px-3 py-2">
+          <span className="text-xs font-semibold">Saved Locations</span>
+        </div>
+        <SavedLocations onSelectLocation={onSelectLocation} />
+      </PopoverContent>
+    </Popover>,
+    portalTarget,
   );
 }

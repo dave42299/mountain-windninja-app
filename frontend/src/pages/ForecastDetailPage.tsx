@@ -16,13 +16,7 @@ import StepIndicator from "@/components/StepIndicator";
 import CesiumDetailMap from "@/components/CesiumDetailMap";
 import OutputViewer from "@/components/OutputViewer";
 import { useForecast } from "@/hooks/use-forecasts";
-
-const ACTIVE_STATUSES = new Set([
-  "queued",
-  "fetching_terrain",
-  "fetching_weather",
-  "running_solver",
-]);
+import { ACTIVE_STATUSES } from "@/api/types";
 
 export default function ForecastDetailPage() {
   const { id } = useParams<{ id: string }>();

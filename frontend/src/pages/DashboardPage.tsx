@@ -9,14 +9,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { useForecasts } from "@/hooks/use-forecasts";
 import type { ForecastStatus } from "@/api/types";
 
-type StatusFilter = "all" | "active" | "completed" | "failed";
-
-const ACTIVE_STATUSES: ForecastStatus[] = [
-  "queued",
-  "fetching_terrain",
-  "fetching_weather",
-  "running_solver",
-];
+type StatusFilter = "all" | "completed" | "failed";
 
 function statusFilterToParam(
   filter: StatusFilter,
@@ -45,15 +38,8 @@ export default function DashboardPage() {
     offset: page * PAGE_SIZE,
   });
 
-  const filteredItems =
-    statusFilter === "active" && data
-      ? data.items.filter((f) =>
-          ACTIVE_STATUSES.includes(f.status),
-        )
-      : data?.items ?? [];
-
-  const totalCount =
-    statusFilter === "active" ? filteredItems.length : (data?.total ?? 0);
+  const items = data?.items ?? [];
+  const totalCount = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   const handleFilterChange = (value: string) => {
@@ -80,7 +66,6 @@ export default function DashboardPage() {
         <Tabs value={statusFilter} onValueChange={handleFilterChange}>
           <TabsList>
             <TabsTrigger value="all">All</TabsTrigger>
-            <TabsTrigger value="active">Active</TabsTrigger>
             <TabsTrigger value="completed">Completed</TabsTrigger>
             <TabsTrigger value="failed">Failed</TabsTrigger>
           </TabsList>
@@ -94,7 +79,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {!isLoading && filteredItems.length === 0 && (
+        {!isLoading && items.length === 0 && (
           <div className="flex flex-col items-center gap-3 p-12 text-center">
             <Wind className="h-10 w-10 text-muted-foreground/40" />
             <p className="text-sm text-muted-foreground">
@@ -110,7 +95,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {filteredItems.length > 0 && (
+        {items.length > 0 && (
           <table className="w-full">
             <thead className="sticky top-0 bg-background">
               <tr className="border-b text-left text-xs font-medium text-muted-foreground">
@@ -123,7 +108,7 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredItems.map((forecast) => (
+              {items.map((forecast) => (
                 <tr
                   key={forecast.id}
                   onClick={() => navigate(`/forecasts/${forecast.id}`)}

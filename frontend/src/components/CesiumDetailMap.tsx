@@ -1,25 +1,25 @@
-import { useMemo, useRef, useEffect } from "react";
+import { useMemo, useRef, useCallback } from "react";
 import { Viewer, Entity, RectangleGraphics, PointGraphics } from "resium";
 import {
   Cartesian3,
   Color,
-  createWorldTerrainAsync,
+  HeightReference,
   Math as CesiumMath,
-  Rectangle,
   type Viewer as CesiumViewer,
 } from "cesium";
+import {
+  terrainProvider,
+  buildDomainRectangle,
+  DOMAIN_FILL_COLOR,
+  DOMAIN_OUTLINE_COLOR,
+  PIN_COLOR,
+} from "@/lib/cesium-utils";
 
 interface CesiumDetailMapProps {
   latitude: number;
   longitude: number;
   sizeKm: number;
 }
-
-const DOMAIN_FILL_COLOR = Color.fromCssColorString("#3b82f6").withAlpha(0.08);
-const DOMAIN_OUTLINE_COLOR = Color.fromCssColorString("#3b82f6");
-const PIN_COLOR = Color.fromCssColorString("#3b82f6");
-
-const terrainProvider = createWorldTerrainAsync();
 
 export default function CesiumDetailMap({
   latitude,
@@ -28,42 +28,40 @@ export default function CesiumDetailMap({
 }: CesiumDetailMapProps) {
   const viewerRef = useRef<CesiumViewer>(null);
 
-  const pinPosition = useMemo(
-    () => Cartesian3.fromDegrees(longitude, latitude, 20),
+  const viewerCallback = useCallback(
+    (viewer: CesiumViewer | null) => {
+      if (!viewer) return;
+
+      viewer.camera.flyTo({
+        destination: Cartesian3.fromDegrees(longitude, latitude, 30_000),
+        orientation: {
+          heading: 0,
+          pitch: CesiumMath.toRadians(-90),
+          roll: 0,
+        },
+        duration: 0,
+      });
+    },
     [latitude, longitude],
   );
 
-  const domainRectangle = useMemo(() => {
-    const halfKm = sizeKm / 2;
-    const latDelta = halfKm / 111.32;
-    const lonDelta = halfKm / (111.32 * Math.cos((latitude * Math.PI) / 180));
-    return Rectangle.fromDegrees(
-      longitude - lonDelta,
-      latitude - latDelta,
-      longitude + lonDelta,
-      latitude + latDelta,
-    );
-  }, [latitude, longitude, sizeKm]);
+  const pinPosition = useMemo(
+    () => Cartesian3.fromDegrees(longitude, latitude),
+    [latitude, longitude],
+  );
 
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-
-    viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(longitude, latitude, 30_000),
-      orientation: {
-        heading: 0,
-        pitch: CesiumMath.toRadians(-90),
-        roll: 0,
-      },
-      duration: 0,
-    });
-  }, [latitude, longitude]);
+  const domainRectangle = useMemo(
+    () => buildDomainRectangle(latitude, longitude, sizeKm),
+    [latitude, longitude, sizeKm],
+  );
 
   return (
     <Viewer
-      ref={viewerRef}
-      full
+      ref={(ref) => {
+        (viewerRef as React.MutableRefObject<CesiumViewer | null>).current =
+          ref?.cesiumElement ?? null;
+        viewerCallback(ref?.cesiumElement ?? null);
+      }}
       terrainProvider={terrainProvider}
       timeline={false}
       animation={false}
@@ -76,6 +74,7 @@ export default function CesiumDetailMap({
       infoBox={false}
       selectionIndicator={false}
       scene3DOnly
+      style={{ width: "100%", height: "100%" }}
     >
       <Entity position={pinPosition} name="Forecast location">
         <PointGraphics
@@ -83,6 +82,7 @@ export default function CesiumDetailMap({
           color={PIN_COLOR}
           outlineColor={Color.WHITE}
           outlineWidth={2}
+          heightReference={HeightReference.CLAMP_TO_GROUND}
         />
       </Entity>
 

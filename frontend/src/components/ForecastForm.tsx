@@ -190,11 +190,14 @@ export default function ForecastForm({
         <Label>Weather model</Label>
         <Select
           defaultValue="hrrr"
-          onValueChange={(val) => setValue("weather_model", "hrrr")}
+          onValueChange={(val) =>
+            setValue("weather_model", val as "hrrr")
+          }
         >
           <SelectTrigger className="mt-1.5">
             <SelectValue />
           </SelectTrigger>
+          {/* Only HRRR is supported today; NBM backend support is deferred */}
           <SelectContent>
             <SelectItem value="hrrr">HRRR (3 km)</SelectItem>
           </SelectContent>

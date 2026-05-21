@@ -7,6 +7,17 @@ export type ForecastStatus =
   | "failed"
   | "cancelled";
 
+export const ACTIVE_STATUSES: ReadonlySet<ForecastStatus> = new Set<ForecastStatus>([
+  "queued",
+  "fetching_terrain",
+  "fetching_weather",
+  "running_solver",
+]);
+
+export function isTerminalStatus(status: ForecastStatus): boolean {
+  return !ACTIVE_STATUSES.has(status);
+}
+
 export type WeatherModel = "hrrr" | "nbm";
 
 export type SolverType = "mass_conservation" | "momentum";

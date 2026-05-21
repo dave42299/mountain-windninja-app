@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bookmark, MapPin, Trash2, X } from "lucide-react";
+import { Bookmark, MapPin, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,6 @@ import {
   DialogTrigger,
   DialogClose,
 } from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
 import {
   useForecastAreas,
   useCreateForecastArea,

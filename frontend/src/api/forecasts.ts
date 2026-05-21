@@ -22,6 +22,7 @@ export function createForecast(
 
 export function listForecasts(
   params: ListForecastsParams = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedForecastResponse> {
   const searchParams = new URLSearchParams();
   if (params.status) searchParams.set("status", params.status);
@@ -32,15 +33,21 @@ export function listForecasts(
 
   const query = searchParams.toString();
   const path = query ? `/forecasts/?${query}` : "/forecasts/";
-  return get<PaginatedForecastResponse>(path);
+  return get<PaginatedForecastResponse>(path, signal);
 }
 
-export function getForecast(id: string): Promise<ForecastResponse> {
-  return get<ForecastResponse>(`/forecasts/${id}`);
+export function getForecast(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ForecastResponse> {
+  return get<ForecastResponse>(`/forecasts/${id}`, signal);
 }
 
-export function getForecastOutput(id: string): Promise<ForecastOutputResponse> {
-  return get<ForecastOutputResponse>(`/forecasts/${id}/output`);
+export function getForecastOutput(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ForecastOutputResponse> {
+  return get<ForecastOutputResponse>(`/forecasts/${id}/output`, signal);
 }
 
 export function getForecastOutputDownloadUrl(

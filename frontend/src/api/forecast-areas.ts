@@ -7,12 +7,17 @@ export function createForecastArea(
   return post<ForecastAreaResponse>("/forecast-areas/", body);
 }
 
-export function listForecastAreas(): Promise<ForecastAreaResponse[]> {
-  return get<ForecastAreaResponse[]>("/forecast-areas/");
+export function listForecastAreas(
+  signal?: AbortSignal,
+): Promise<ForecastAreaResponse[]> {
+  return get<ForecastAreaResponse[]>("/forecast-areas/", signal);
 }
 
-export function getForecastArea(id: string): Promise<ForecastAreaResponse> {
-  return get<ForecastAreaResponse>(`/forecast-areas/${id}`);
+export function getForecastArea(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ForecastAreaResponse> {
+  return get<ForecastAreaResponse>(`/forecast-areas/${id}`, signal);
 }
 
 export function deleteForecastArea(id: string): Promise<void> {

@@ -14,7 +14,7 @@ import type { ForecastAreaCreate } from "@/api/types";
 export function useForecastAreas() {
   return useQuery({
     queryKey: queryKeys.forecastAreas.all,
-    queryFn: listForecastAreas,
+    queryFn: ({ signal }) => listForecastAreas(signal),
   });
 }
 
