@@ -34,7 +34,7 @@ The project adapts and extends the existing CLI-based workflow at [Austfi/mounta
 - **Server state:** TanStack Query 5 (adaptive polling for forecast status)
 - **Forms:** React Hook Form + Zod validation
 - **3D Map:** CesiumJS (via resium) with Cesium World Terrain and Ion imagery
-- **Wind visualization:** cesium-wind-layer (installed, integration pending)
+- **Wind visualization:** cesium-wind-layer (GPU-accelerated particle animation over 3D terrain)
 - **Component library:** shadcn/ui (Radix primitives) + Tailwind CSS v4
 - **Toasts:** sonner
 
@@ -72,7 +72,7 @@ mountain-windninja-app/
 ├── frontend/                # React + TypeScript SPA
 │   └── src/
 │       ├── pages/           # MapPage, DashboardPage, ForecastDetailPage
-│       ├── components/      # CesiumMapView, ForecastForm, SavedLocations, OutputViewer, etc.
+│       ├── components/      # CesiumMapView, ForecastForm, SavedLocations, OutputViewer, WindOverlay, TimelineScrubber, WindLegend, etc.
 │       ├── api/             # client, forecasts, forecast-areas, query-keys, types
 │       ├── hooks/           # use-forecasts, use-forecast-areas (polling + abort)
 │       ├── lib/             # cesium.ts (Ion init), cesium-utils.ts (shared), utils.ts (cn)
@@ -173,6 +173,22 @@ Full design in `docs/phase3-frontend-design.md`. Implemented in two stages:
 
 **API integration:** TanStack Query with adaptive polling intervals for forecast status updates. AbortController signal threading for proper request cancellation. Lazy-loaded pages via `React.lazy` to defer Cesium bundle until needed.
 
+### Phase 3b -- Wind visualization (complete)
+
+Full design in the plan file. Backend + frontend implemented:
+
+**Backend:**
+- `GET /forecasts/{id}/wind-field/{timestep}` endpoint parses WindNinja ASCII grid output, converts speed/direction to U/V (m/s), computes WGS84 bounds via pyproj
+- `services/wind_field.py` — ASC grid parsing, meteorological direction→U/V conversion, UTM→WGS84 bounds
+- Full test suite in `tests/test_wind_field.py`
+
+**Frontend:**
+- `WindFieldResponse` type, `getWindField()` API function, `useWindField` hook with `staleTime: Infinity` (immutable per-timestep data)
+- `WindOverlay` — imperative cesium-wind-layer `WindLayer` lifecycle with two-effect pattern (create/destroy on viewer, updateWindData on timestep change)
+- `TimelineScrubber` — play/pause, step forward/back, range slider, formatted UTC time display
+- `WindLegend` — color gradient bar with mph speed labels
+- `ForecastDetailPage` integration: full-width 450px CesiumJS map for completed forecasts with wind particle overlay, timeline, legend, and show/hide toggle
+
 ---
 
 ## 5. Known Gaps and Deferred Items
@@ -183,27 +199,26 @@ These items were scoped for Phases 1-3 but are intentionally deferred or partial
 - **LCP in solver physics:** LCP tiles are downloaded and cached, but the solver config uses DEM + gridded forcing with a uniform vegetation roughness setting (`solver_vegetation`, default `"trees"`). LCP-driven canopy physics is not wired into the solver config yet.
 - **Forecast cancellation:** The `cancelled` status exists in the DB enum but there is no cancel endpoint or UI control.
 - **Frontend tests:** No frontend test suite yet.
-- **Wind particle visualization:** CesiumJS and cesium-wind-layer are installed, but the wind-field backend endpoint and frontend `WindOverlay` / `TimelineScrubber` components are not yet implemented. This is the next work item.
 
 ---
 
 ## 6. Remaining Phases
 
-### Phase 3b -- Wind visualization (in progress)
+### Phase 3b -- Wind visualization (complete)
 
 **Goal:** Display completed WindNinja output as animated wind particles over 3D terrain in the browser.
 
-**Backend (not yet started):**
-- Parse WindNinja ASCII grid output (speed + direction grids) and convert to U/V JSON
-- `GET /forecasts/{id}/wind-field/{timestep}` endpoint
-- Backend tests for wind-field parsing and API
+**Backend:**
+- `GET /forecasts/{id}/wind-field/{timestep}` endpoint parses WindNinja ASCII grid output (speed + direction), converts to U/V (m/s), computes WGS84 bounds via pyproj, returns JSON
+- Wind-field service (`services/wind_field.py`) with ASC grid parsing, meteorological direction conversion, and UTM→WGS84 bounds computation
+- Full test suite (`tests/test_wind_field.py`)
 
-**Frontend (not yet started):**
-- `WindFieldResponse` type, API function, `useWindField` hook
-- `WindOverlay` component (cesium-wind-layer lifecycle, color gradient, terrain occlusion)
-- `TimelineScrubber` component (play/pause, step, slider, time display)
-- `WindLegend` component (color scale overlay with speed labels)
-- Integration into ForecastDetailPage for completed forecasts
+**Frontend:**
+- `WindFieldResponse` type, `getWindField()` API function, `useWindField` hook (enabled only when status is `completed`, `staleTime: Infinity` for immutable data)
+- `WindOverlay` component manages imperative `WindLayer` lifecycle with two-effect pattern (create/destroy on viewer change, updateWindData on timestep change)
+- `TimelineScrubber` component with play/pause, step forward/back, range slider, and formatted UTC time display
+- `WindLegend` component with color gradient bar and mph speed labels
+- ForecastDetailPage integration: full-width 450px CesiumJS map for completed forecasts, wind overlay, timeline scrubber, legend, and show/hide toggle
 
 ### Phase 4 -- Cloud deployment and solver orchestration
 
@@ -236,9 +251,8 @@ These items were scoped for Phases 1-3 but are intentionally deferred or partial
 
 ## 7. Immediate Next Steps
 
-1. **Build the wind-field backend endpoint** — parse WindNinja ASCII grids, convert speed/direction to U/V, expose via `GET /forecasts/{id}/wind-field/{timestep}`
-2. **Integrate cesium-wind-layer** — `WindOverlay` component with GPU-accelerated particles, timeline scrubber, speed legend
-3. **Decide on cloud provider** — GCP vs AWS for compute, storage, and deployment
-4. **Implement `storage.py`** — wire up cloud storage (GCS or S3) for terrain cache, weather inputs, and solver output
-5. **Replace background tasks with a durable job queue** — the current in-process `BackgroundTasks` approach does not survive server restarts
-6. **Wire LCP into solver config** — use the already-cached LCP tiles for vegetation-aware solver runs instead of uniform roughness
+1. **Decide on cloud provider** — GCP vs AWS for compute, storage, and deployment
+2. **Implement `storage.py`** — wire up cloud storage (GCS or S3) for terrain cache, weather inputs, and solver output
+3. **Replace background tasks with a durable job queue** — the current in-process `BackgroundTasks` approach does not survive server restarts
+4. **Wire LCP into solver config** — use the already-cached LCP tiles for vegetation-aware solver runs instead of uniform roughness
+5. **Add forecast cancellation** — cancel endpoint + UI button for in-progress forecasts

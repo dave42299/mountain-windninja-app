@@ -12,8 +12,9 @@ This app wraps the WindNinja diagnostic wind model in a web interface that:
 - Runs the WindNinja solver in Docker
 - Surfaces job status and output file downloads in the browser
 - Displays results on a 3D CesiumJS globe with terrain rendering
+- Visualizes wind fields as animated GPU-accelerated particles over 3D terrain
 
-**Current status:** Phase 2 (backend API) and Phase 3 (React frontend with CesiumJS 3D map) are complete. Wind particle visualization (cesium-wind-layer) is next. Cloud deployment is planned for a later phase.
+**Current status:** Phase 2 (backend API), Phase 3 (React frontend with CesiumJS 3D map), and Phase 3b (wind particle visualization with cesium-wind-layer) are complete. The app provides an end-to-end workflow from forecast submission through animated 3D wind visualization. Cloud deployment is planned for a later phase.
 
 ## Project Structure
 

@@ -168,6 +168,7 @@ Database initialization:
 | GET | /forecasts/{id} | Get forecast status and metadata |
 | GET | /forecasts/{id}/output | List output files |
 | GET | /forecasts/{id}/output/{filename} | Download an output file |
+| GET | /forecasts/{id}/wind-field/{timestep} | Wind-field U/V data for a single timestep |
 | GET | /health | Health check |
 
 ## Data Flow (Phase 2)
@@ -493,6 +494,7 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/services/solver_config.py` | WindNinja .cfg generation for griddedInitialization (pure logic) |
 | `backend/services/solver_runner.py` | Docker subprocess execution, mesh cache cleanup |
 | `backend/services/solver.py` | Public solver API: per-timestep orchestration, retry, cleanup |
+| `backend/services/wind_field.py` | Parse ASC grids, speed/direction → U/V (m/s), UTM → WGS84 bounds |
 | `backend/tests/test_terrain_*.py` | Terrain unit tests and optional integration (env-gated) |
 | `backend/tests/test_weather_models.py` | HRRR cycle resolution and time validation tests (21 tests) |
 | `backend/tests/test_weather_hrrr.py` | GRIB processing, U/V conversion, ASCII grid writing tests (21 tests) |
@@ -500,6 +502,7 @@ The FastAPI lifespan handler creates the data directory structure on first start
 | `backend/tests/test_solver_config.py` | Config generation tests: output format, solver types, validation (23 tests) |
 | `backend/tests/test_solver_runner.py` | Docker execution and mesh cache cleanup tests (14 tests) |
 | `backend/tests/test_solver.py` | Solver orchestrator tests: happy path, retry, cleanup, ordering (12 tests) |
+| `backend/tests/test_wind_field.py` | Wind-field parsing, U/V conversion, bounds, and API endpoint tests |
 | `backend/tests/test_forecasts_api.py` | Forecast endpoint + shared helper + output endpoint + pagination/filter tests (40 tests) |
 | `backend/tests/test_forecast_areas_api.py` | ForecastArea CRUD tests via TestClient (11 tests) |
 | `backend/tests/test_integration.py` | Mocked end-to-end pipeline tests: submit -> run -> list output -> download -> pagination (3 tests) |
@@ -542,6 +545,49 @@ PaginatedForecastResponse
 - ``status``: filter by ForecastStatus enum value
 - ``forecast_area_id``: filter by saved area UUID
 
+## Wind-field service (Phase 3b)
+
+### Design decisions
+
+- **On-demand parsing, not pre-computed.** Wind-field data is parsed from the existing WindNinja ASCII grid output files on each request rather than pre-computing and storing JSON during the solver run. This keeps the solver service unchanged and avoids storing redundant data. ASCII grid parsing is fast (milliseconds for typical grids).
+
+- **U/V in m/s for cesium-wind-layer.** The endpoint converts WindNinja output (speed in mph, direction in meteorological degrees) to U/V components in m/s. cesium-wind-layer expects U/V directly. The frontend legend converts back to mph for user display.
+
+- **WGS84 bounds via pyproj.** WindNinja output grids are in UTM (same CRS as the DEM). The wind-field service uses `pyproj.Transformer` to convert UTM grid corners to WGS84 decimal degrees, which cesium-wind-layer needs for geographic positioning.
+
+- **Top-to-bottom row order preserved.** ESRI ASCII grids store data top-to-bottom (first row = northernmost). cesium-wind-layer also expects top-to-bottom by default (`flipY: false`), so no row reordering is needed.
+
+- **Parent weather rasters excluded.** The output directory contains both WindNinja downscaled grids and PASTCAST parent weather rasters (coarse HRRR grids). The service excludes files matching `PASTCAST-*` when globbing for output grids.
+
+### Key invariants
+
+- Timestep index is 0-based and must be < `timestep_count`.
+- `speed_min` and `speed_max` are in m/s (matching U/V units).
+- `bounds` are in WGS84 decimal degrees (west, south, east, north).
+- The endpoint returns 404 if the forecast is not completed or if the timestep index is out of range.
+
+### Response schema
+
+```
+WindFieldBounds
+  west: float, south: float, east: float, north: float
+
+WindFieldResponse
+  forecast_id: UUID, timestep_index: int, timestep_count: int,
+  valid_time: datetime, width: int, height: int,
+  bounds: WindFieldBounds, u: list[float], v: list[float],
+  speed_min: float, speed_max: float
+```
+
+### Implementation
+
+| File | Purpose |
+|------|---------|
+| `backend/services/wind_field.py` | Parse ASC grids, speed/direction → U/V (m/s), UTM → WGS84 bounds |
+| `backend/api/routers/forecasts.py` | `GET /forecasts/{id}/wind-field/{timestep}` endpoint |
+| `backend/models/schemas.py` | `WindFieldBounds` and `WindFieldResponse` Pydantic models |
+| `backend/tests/test_wind_field.py` | Unit tests for parsing, conversion, bounds, and API endpoint |
+
 ## Phase 2 Completion Summary
 
 All Phase 2 work is complete. The backend provides:
@@ -549,9 +595,11 @@ All Phase 2 work is complete. The backend provides:
 - **ForecastArea CRUD** (4 endpoints) for saved locations
 - **Forecast submission and status** (3 endpoints) with non-blocking background worker pipeline (terrain + weather + solver)
 - **Output file serving** (2 endpoints) with 409 status gating and retry guidance
+- **Wind-field data** (1 endpoint) parsing WindNinja ASCII grids into U/V JSON for frontend visualization
 - **Paginated forecast listing** with status and forecast area filters
 - **Health check** (1 endpoint) with database connectivity probe
 - **Terrain service**: USGS 3DEP DEM + LANDFIRE LCP with spatial caching
 - **Weather service**: HRRR via Herbie/S3 with cycle resolution and ASCII grid conversion
 - **Solver service**: WindNinja Docker execution with retry and mesh cache cleanup
-- **201 unit tests passing**, 2 env-gated integration tests (terrain + solver)
+- **Wind-field service**: ASCII grid parsing, speed/direction→U/V conversion, UTM→WGS84 bounds
+- **201+ unit tests passing**, 2 env-gated integration tests (terrain + solver)

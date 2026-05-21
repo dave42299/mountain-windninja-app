@@ -1,7 +1,7 @@
 # Phase 3: Frontend UI Design Report
 
 **Date:** May 21, 2026
-**Status:** Complete -- React + TypeScript SPA with CesiumJS 3D map, forecast submission, status polling, output viewer, saved locations, and dark mode. Connected to Phase 2 backend via Vite dev proxy.
+**Status:** Complete -- React + TypeScript SPA with CesiumJS 3D map, forecast submission, status polling, output viewer, saved locations, dark mode, and GPU-accelerated wind particle visualization. Connected to Phase 2 backend via Vite dev proxy.
 
 ## Objective
 
@@ -10,7 +10,7 @@ Build a responsive single-page application that lets users request wind forecast
 ## Scope Assumptions
 
 - **Single-user local dev.** No authentication. The app connects to the local backend via Vite proxy.
-- **No wind particle visualization yet.** Phase 3 provides file listing and download for completed forecasts. Animated wind particles over 3D terrain are the next work item (Phase 3b, using cesium-wind-layer).
+- **Wind particle visualization complete (Phase 3b).** Completed forecasts display animated GPU-accelerated wind particles over 3D terrain via cesium-wind-layer, with timeline scrubber, speed legend, and show/hide toggle.
 - **Polling, not WebSocket.** TanStack Query's `refetchInterval` is sufficient for forecast status updates (forecasts take minutes). Real-time push is deferred.
 - **Cesium Ion free tier.** Provides Cesium World Terrain and Bing imagery. Token stored in `frontend/.env` (gitignored), placeholder in `.env.example`.
 
@@ -98,7 +98,13 @@ User clicks globe → CesiumMapView.onLocationSelect (globe.pick → Cartographi
     → Toast notification → navigate to /forecasts/:id
     → ForecastDetailPage polls via useForecast(id)
       → Status transitions render in StepIndicator
-      → On completed: OutputViewer fetches file list
+      → On completed:
+        → Full-width CesiumDetailMap renders with onViewerReady callback
+        → useWindField(forecastId, currentTimestep, status) fetches wind data
+        → WindOverlay creates/updates WindLayer with U/V Float32Arrays
+        → TimelineScrubber controls currentTimestep (play/step/slider)
+        → WindLegend displays speed range in mph
+        → OutputViewer fetches file list
 ```
 
 ### Component hierarchy
@@ -114,8 +120,11 @@ App (ErrorBoundary → QueryClientProvider → BrowserRouter → Suspense → To
     ├── DashboardPage (lazy, table + tabs + pagination)
     └── ForecastDetailPage (lazy)
         ├── StepIndicator (pipeline progress)
-        ├── OutputViewer (file table + download links)
-        └── CesiumDetailMap (interactive map inset)
+        ├── CesiumDetailMap (full-width for completed, map inset otherwise)
+        │   └── WindOverlay (cesium-wind-layer GPU particles)
+        ├── TimelineScrubber (play/pause/step + slider, bottom-left overlay)
+        ├── WindLegend (color scale, bottom-right overlay)
+        └── OutputViewer (file table + download links)
 ```
 
 ## Routes
@@ -147,6 +156,7 @@ App (ErrorBoundary → QueryClientProvider → BrowserRouter → Suspense → To
 | `useForecast(id)` | `["forecast", id]` | Single forecast, adaptive polling by status |
 | `useCreateForecast()` | mutation | Invalidates `["forecasts"]` on success |
 | `useForecastOutput(id, status)` | `["forecast-output", id]` | Enabled only when `status === "completed"` |
+| `useWindField(id, timestep, status)` | `["forecast-wind-field", id, timestep]` | Enabled only when `status === "completed"`, `staleTime: Infinity` (immutable data) |
 | `useForecastAreas()` | `["forecast-areas"]` | All saved locations |
 | `useCreateForecastArea()` | mutation | Invalidates `["forecast-areas"]` |
 | `useDeleteForecastArea()` | mutation | Invalidates `["forecast-areas"]` |
@@ -195,6 +205,7 @@ App (ErrorBoundary → QueryClientProvider → BrowserRouter → Suspense → To
 | Server state | TanStack Query | 5 | Polling, caching, mutations, abort |
 | 3D Map | CesiumJS | 1.141 | 3D globe and terrain rendering |
 | Map bindings | resium | 1.21 | React wrapper for CesiumJS |
+| Wind particles | cesium-wind-layer | 0.10 | GPU-accelerated wind particle animation |
 | Vite plugin | vite-plugin-cesium-engine | 1.6 | WASM workers, assets, CSS injection |
 | UI components | shadcn/ui | latest | Radix-based accessible components |
 | Styling | Tailwind CSS | 4 | Utility-first CSS |
@@ -235,7 +246,10 @@ App (ErrorBoundary → QueryClientProvider → BrowserRouter → Suspense → To
 | `frontend/src/pages/ForecastDetailPage.tsx` | Status + progress + metadata + output + 3D map inset |
 | `frontend/src/pages/NotFoundPage.tsx` | 404 page |
 | `frontend/src/components/CesiumMapView.tsx` | CesiumJS 3D globe with click, pin, domain overlay, saved markers |
-| `frontend/src/components/CesiumDetailMap.tsx` | CesiumJS map inset for detail page |
+| `frontend/src/components/CesiumDetailMap.tsx` | CesiumJS map for detail page (full-width with viewer callback for wind overlay) |
+| `frontend/src/components/WindOverlay.tsx` | Imperative cesium-wind-layer lifecycle (create/update/destroy WindLayer) |
+| `frontend/src/components/TimelineScrubber.tsx` | Play/pause, step forward/back, range slider, UTC time display |
+| `frontend/src/components/WindLegend.tsx` | Color gradient bar with speed labels (mph) |
 | `frontend/src/components/ForecastForm.tsx` | Zod-validated submission form |
 | `frontend/src/components/ForecastSidebar.tsx` | Recent forecasts panel + nav portal toggle |
 | `frontend/src/components/OutputViewer.tsx` | File table with type recognition + download links |
@@ -248,7 +262,7 @@ App (ErrorBoundary → QueryClientProvider → BrowserRouter → Suspense → To
 
 ## Phase 3 Completion Summary
 
-All Phase 3 work is complete. The frontend provides:
+All Phase 3 and Phase 3b work is complete. The frontend provides:
 
 - **3D map-based location picking** with CesiumJS terrain rendering and domain extent visualization
 - **Forecast submission** with full Zod validation and backend connectivity
@@ -260,3 +274,7 @@ All Phase 3 work is complete. The frontend provides:
 - **Error handling** via global boundary, 404 page, and toast notifications
 - **Lazy loading** for Cesium-heavy pages to keep initial bundle lean
 - **Request cancellation** via AbortController threading through TanStack Query
+- **Animated wind particle visualization** via cesium-wind-layer with GPU-accelerated rendering over 3D terrain
+- **Timeline scrubber** for navigating multi-hour forecast timesteps with play/pause animation
+- **Wind speed legend** with color gradient and mph labels
+- **Show/hide wind toggle** for toggling particle layer visibility
