@@ -139,3 +139,29 @@ class OutputFileInfo(BaseModel):
 class ForecastOutputResponse(BaseModel):
     forecast_id: uuid.UUID
     files: list[OutputFileInfo]
+
+
+# ---------------------------------------------------------------------------
+# Wind-field schemas
+# ---------------------------------------------------------------------------
+
+
+class WindFieldBounds(BaseModel):
+    west: float
+    south: float
+    east: float
+    north: float
+
+
+class WindFieldResponse(BaseModel):
+    forecast_id: uuid.UUID
+    timestep_index: int
+    timestep_count: int
+    valid_time: datetime
+    width: int
+    height: int
+    bounds: WindFieldBounds
+    u: list[float]
+    v: list[float]
+    speed_min: float
+    speed_max: float

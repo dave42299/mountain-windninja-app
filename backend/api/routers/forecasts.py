@@ -31,6 +31,8 @@ from models.schemas import (
     ForecastResponse,
     OutputFileInfo,
     PaginatedForecastResponse,
+    WindFieldBounds,
+    WindFieldResponse,
 )
 from services.terrain import (
     TerrainDemError,
@@ -47,6 +49,11 @@ from services.solver import (
     SolverConfigError,
     SolverExecutionError,
     run_solver_for_forecast,
+)
+from services.wind_field import (
+    WindFieldError,
+    WindFieldTimestepError,
+    load_wind_field,
 )
 from services.weather import (
     WeatherDownloadError,
@@ -255,6 +262,48 @@ def download_forecast_output(
 
     media_type = _MEDIA_TYPES.get(file_path.suffix, "application/octet-stream")
     return FileResponse(path=file_path, filename=filename, media_type=media_type)
+
+
+@router.get(
+    "/{forecast_id}/wind-field/{timestep_index}",
+    response_model=WindFieldResponse,
+)
+def get_wind_field(
+    forecast_id: uuid.UUID,
+    timestep_index: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> WindFieldResponse:
+    """Return parsed wind-field data (U/V in m/s) for one timestep."""
+    forecast = _get_forecast(forecast_id, db)
+    _require_completed_forecast(forecast)
+    output_dir = _resolve_output_dir(forecast_id, settings)
+
+    try:
+        wind_data = load_wind_field(output_dir, timestep_index)
+    except WindFieldTimestepError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WindFieldError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return WindFieldResponse(
+        forecast_id=forecast_id,
+        timestep_index=wind_data.timestep_index,
+        timestep_count=wind_data.timestep_count,
+        valid_time=wind_data.valid_time,
+        width=wind_data.width,
+        height=wind_data.height,
+        bounds=WindFieldBounds(
+            west=wind_data.bounds.west,
+            south=wind_data.bounds.south,
+            east=wind_data.bounds.east,
+            north=wind_data.bounds.north,
+        ),
+        u=wind_data.u,
+        v=wind_data.v,
+        speed_min=wind_data.speed_min,
+        speed_max=wind_data.speed_max,
+    )
 
 
 # ---------------------------------------------------------------------------
