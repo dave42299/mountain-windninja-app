@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import MapView, { type SelectedLocation } from "@/components/MapView";
 import ForecastForm from "@/components/ForecastForm";
 import ForecastSidebar from "@/components/ForecastSidebar";
@@ -59,26 +60,11 @@ export default function MapPage() {
         savedLocations={savedMarkers}
       />
 
-      <div className="absolute left-4 top-4 z-10">
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5 bg-background/95 shadow-lg backdrop-blur-sm"
-          onClick={() => setIsLocationsOpen(!isLocationsOpen)}
-        >
-          <Bookmark className="h-4 w-4" />
-          Saved
-        </Button>
-
-        {isLocationsOpen && (
-          <div className="mt-2 w-64 rounded-lg border bg-background/95 shadow-lg backdrop-blur-sm">
-            <div className="flex items-center justify-between px-3 py-2">
-              <span className="text-xs font-semibold">Saved Locations</span>
-            </div>
-            <SavedLocations onSelectLocation={handleSavedLocationSelect} />
-          </div>
-        )}
-      </div>
+      <SavedNavButton
+        isOpen={isLocationsOpen}
+        onToggle={() => setIsLocationsOpen(!isLocationsOpen)}
+        onSelectLocation={handleSavedLocationSelect}
+      />
 
       <ForecastSidebar
         isOpen={isSidebarOpen}
@@ -106,5 +92,48 @@ export default function MapPage() {
         </SheetContent>
       </Sheet>
     </div>
+  );
+}
+
+function SavedNavButton({
+  isOpen,
+  onToggle,
+  onSelectLocation,
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  onSelectLocation: (location: SelectedLocation, sizeKm: number) => void;
+}) {
+  const portalTarget = document.getElementById("nav-portal");
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  if (!portalTarget) return null;
+
+  return (
+    <>
+      {createPortal(
+        <div className="relative">
+          <Button
+            ref={buttonRef}
+            variant="ghost"
+            size="sm"
+            className="gap-1.5"
+            onClick={onToggle}
+          >
+            <Bookmark className="h-4 w-4" />
+            Saved
+          </Button>
+          {isOpen && (
+            <div className="absolute right-0 top-full mt-2 w-64 rounded-lg border bg-background shadow-lg">
+              <div className="px-3 py-2">
+                <span className="text-xs font-semibold">Saved Locations</span>
+              </div>
+              <SavedLocations onSelectLocation={onSelectLocation} />
+            </div>
+          )}
+        </div>,
+        portalTarget,
+      )}
+    </>
   );
 }
