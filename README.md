@@ -11,8 +11,9 @@ This app wraps the WindNinja diagnostic wind model in a web interface that:
 - Downloads HRRR weather forecast data from NOAA
 - Runs the WindNinja solver in Docker
 - Surfaces job status and output file downloads in the browser
+- Displays results on a 3D CesiumJS globe with terrain rendering
 
-**Current status:** Phase 2 (backend API) and Phase 3 (React frontend) are implemented for local development. Cloud deployment and 3D wind visualization are planned for later phases.
+**Current status:** Phase 2 (backend API) and Phase 3 (React frontend with CesiumJS 3D map) are complete. Wind particle visualization (cesium-wind-layer) is next. Cloud deployment is planned for a later phase.
 
 ## Project Structure
 
@@ -22,7 +23,7 @@ mountain-windninja-app/
 │   ├── api/              # REST endpoint routers
 │   ├── services/         # Terrain, weather, solver orchestration
 │   └── models/           # DB models and Pydantic schemas
-├── frontend/             # React + TypeScript SPA (Vite, MapLibre)
+├── frontend/             # React + TypeScript SPA (Vite, CesiumJS)
 │   └── src/
 ├── solver/               # WindNinja Docker wrapper
 ├── docs/                 # Design reports and project goals
@@ -41,6 +42,7 @@ See [docs/project-goals.md](docs/project-goals.md) for background and roadmap. D
 - **Docker** — PostgreSQL via `docker-compose.yml`; WindNinja solver image for full forecast runs
 - **Python 3.12+** — backend API (native, not containerized in dev)
 - **Node.js 20+** and **npm** — frontend dev server
+- **Cesium Ion account** — free account at [cesium.com/ion](https://cesium.com/ion) for terrain and imagery tiles
 
 ### First-time backend setup
 
@@ -55,6 +57,14 @@ cp ../.env.example .env   # if .env does not exist
 ```
 
 `launch-server` and `launch` run `alembic upgrade head` automatically on startup.
+
+### First-time frontend setup
+
+```bash
+cd frontend
+cp .env.example .env
+# Edit .env and paste your Cesium Ion token
+```
 
 ### Quick start (recommended)
 
@@ -94,10 +104,11 @@ The frontend proxies `/api/*` to the backend during development (see `frontend/v
 
 ### Full forecast pipeline (optional)
 
-Submitting forecasts that complete through terrain, weather, and solver stages requires the **mountain-windninja** solver Docker image (see [mountain_windninja](https://github.com/Austfi/mountain_windninja) or this repo’s `solver/`). Without it, the UI still works for creating jobs and viewing status; runs may fail during terrain or solver steps depending on your environment.
+Submitting forecasts that complete through terrain, weather, and solver stages requires the **mountain-windninja** solver Docker image (see [mountain_windninja](https://github.com/Austfi/mountain_windninja) or this repo's `solver/`). Without it, the UI still works for creating jobs and viewing status; runs may fail during terrain or solver steps depending on your environment.
 
 ## Acknowledgments
 
 - [WindNinja](https://github.com/firelab/windninja) by USDA Forest Service Fire Lab
 - [mountain_windninja](https://github.com/Austfi/mountain_windninja) CLI workflow (reference implementation)
 - NOAA HRRR data via [AWS Open Data](https://registry.opendata.aws/noaa-hrrr-pds/)
+- [CesiumJS](https://cesium.com/cesiumjs/) for 3D globe rendering

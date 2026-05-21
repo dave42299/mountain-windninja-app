@@ -34,8 +34,8 @@ This project targets **United States locations only** for the initial implementa
 ## Key Goals
 
 ### 1. User Interface for Forecast Input
-A web-based map UI where users can:
-- Click on a map or enter lat/lon coordinates to select a forecast location
+A web-based 3D map UI where users can:
+- Click on a CesiumJS 3D globe to select a forecast location
 - Specify a domain size (e.g., 10-12 km square)
 - Choose forecast start time and duration
 - Select the weather model (HRRR, NBM)

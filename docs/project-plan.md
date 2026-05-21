@@ -9,7 +9,7 @@ Build a web application that lets users request high-resolution wind forecasts f
 - Downloading the matching HRRR weather forecast from NOAA
 - Running the WindNinja solver in a Docker container
 - Displaying job progress and serving output file downloads
-- (Future) Rendering results in an interactive 3D terrain + wind visualization
+- Rendering results as animated wind particles over 3D terrain in the browser
 
 The project adapts and extends the existing CLI-based workflow at [Austfi/mountain_windninja](https://github.com/Austfi/mountain_windninja).
 
@@ -33,7 +33,8 @@ The project adapts and extends the existing CLI-based workflow at [Austfi/mounta
 - **Routing:** React Router 7
 - **Server state:** TanStack Query 5 (adaptive polling for forecast status)
 - **Forms:** React Hook Form + Zod validation
-- **Map:** MapLibre GL + react-map-gl (CARTO Positron basemap, no API key required)
+- **3D Map:** CesiumJS (via resium) with Cesium World Terrain and Ion imagery
+- **Wind visualization:** cesium-wind-layer (installed, integration pending)
 - **Component library:** shadcn/ui (Radix primitives) + Tailwind CSS v4
 - **Toasts:** sonner
 
@@ -42,6 +43,7 @@ The project adapts and extends the existing CLI-based workflow at [Austfi/mounta
 - `docker-compose.yml` runs PostgreSQL only
 - `launch` / `launch-server` / `launch-client` scripts orchestrate local dev
 - Frontend proxies `/api/*` to `http://localhost:8000` via Vite config
+- Cesium Ion token stored in `frontend/.env` (gitignored), placeholder in `.env.example`
 
 ### Data sources (US only for now)
 
@@ -70,9 +72,11 @@ mountain-windninja-app/
 ├── frontend/                # React + TypeScript SPA
 │   └── src/
 │       ├── pages/           # MapPage, DashboardPage, ForecastDetailPage
-│       ├── components/      # MapView, ForecastForm, SavedLocations, OutputViewer, etc.
-│       ├── api/             # client, forecasts, forecast-areas, types
-│       └── hooks/           # use-forecasts, use-forecast-areas (polling)
+│       ├── components/      # CesiumMapView, ForecastForm, SavedLocations, OutputViewer, etc.
+│       ├── api/             # client, forecasts, forecast-areas, query-keys, types
+│       ├── hooks/           # use-forecasts, use-forecast-areas (polling + abort)
+│       ├── lib/             # cesium.ts (Ion init), cesium-utils.ts (shared), utils.ts (cn)
+│       └── types/           # map.ts (SelectedLocation, SavedLocationMarker)
 ├── solver/                  # Placeholder Dockerfile + scripts/.gitkeep
 ├── infra/                   # Terraform stub (main.tf with Phase 4 comments)
 ├── docs/                    # project goals, plan, phase design reports
@@ -138,27 +142,36 @@ Full design in `docs/phase2-backend-design.md`. Implemented:
 
 **Test suite:** 17 test modules under `backend/tests/` covering API, services, geometry, config generation, and mocked Docker interactions. Integration tests gated behind `RUN_TERRAIN_INTEGRATION` and `RUN_SOLVER_INTEGRATION` env flags.
 
-### Phase 3 -- Frontend UI (complete)
+### Phase 3 -- Frontend UI and 3D map (complete)
 
-Full design in `docs/phase3-frontend-design.md`. Implemented:
+Full design in `docs/phase3-frontend-design.md`. Implemented in two stages:
 
-**Pages:**
+**Stage 1 -- Core UI (React SPA):**
 
-- `/` — MapPage: interactive MapLibre map with click-to-select location, domain rectangle overlay, forecast form sidebar, saved location markers, recent forecasts list
-- `/dashboard` — DashboardPage: paginated forecast history with status filtering
-- `/forecasts/:id` — ForecastDetailPage: pipeline step indicator, metadata, mini map, output file listing and download
+- `/` — MapPage: interactive CesiumJS 3D map with click-to-select location, domain rectangle overlay, forecast form sidebar, saved location markers (via Popover), recent forecasts list
+- `/dashboard` — DashboardPage: paginated forecast history with status filtering (All/Completed/Failed)
+- `/forecasts/:id` — ForecastDetailPage: pipeline step indicator, metadata, CesiumJS mini map, output file listing and download
+
+**Stage 2 -- CesiumJS migration (replaced MapLibre):**
+
+- Replaced MapLibre GL / react-map-gl with CesiumJS (via resium) for full 3D terrain rendering
+- `CesiumMapView` -- click-to-select on the 3D globe, domain rectangle overlay, saved location markers with terrain clamping
+- `CesiumDetailMap` -- interactive mini map on the forecast detail page
+- Shared Cesium utilities in `lib/cesium-utils.ts` (terrain provider, domain rectangle math, color constants)
+- Vite plugin (`vite-plugin-cesium-engine`) handles WASM workers and asset serving
+- Cesium Ion token for terrain and imagery (free tier)
 
 **Key components:**
 
-- `MapView` — click-to-select lat/lon, domain square overlay, saved location markers
-- `ForecastForm` — domain size, start time, duration, model (HRRR/NBM), solver type, wind height
-- `SavedLocations` — CRUD for forecast area bookmarks, save-from-map flow
+- `CesiumMapView` — click-to-select lat/lon, domain rectangle overlay, saved location markers
+- `ForecastForm` — domain size, start time, duration, model (HRRR), solver type, wind height
+- `SavedLocations` — CRUD for forecast area bookmarks, save-from-map flow (Popover dropdown)
 - `ForecastSidebar` — recent forecasts on the map page
 - `OutputViewer` — file listing and download links for completed forecasts
 - `StepIndicator` — visual pipeline progress
-- `ThemeToggle` — light/dark mode with localStorage persistence
+- `ThemeToggle` — light/dark mode with localStorage persistence (flash-free via inline script)
 
-**API integration:** TanStack Query with adaptive polling intervals for forecast status updates.
+**API integration:** TanStack Query with adaptive polling intervals for forecast status updates. AbortController signal threading for proper request cancellation. Lazy-loaded pages via `React.lazy` to defer Cesium bundle until needed.
 
 ---
 
@@ -169,12 +182,28 @@ These items were scoped for Phases 1-3 but are intentionally deferred or partial
 - **NBM weather model:** API enums and form UI accept NBM, but the weather service rejects non-HRRR requests. Deferred until WindNinja exposes a native pastcast path for NBM or the user opts for an archive-forcing workflow.
 - **LCP in solver physics:** LCP tiles are downloaded and cached, but the solver config uses DEM + gridded forcing with a uniform vegetation roughness setting (`solver_vegetation`, default `"trees"`). LCP-driven canopy physics is not wired into the solver config yet.
 - **Forecast cancellation:** The `cancelled` status exists in the DB enum but there is no cancel endpoint or UI control.
-- **CesiumJS:** The original plan called for CesiumJS in Phase 3 for the map. MapLibre GL was chosen instead as a lighter, API-key-free solution for the 2D map interactions. CesiumJS remains the plan for Phase 5's 3D wind visualization.
 - **Frontend tests:** No frontend test suite yet.
+- **Wind particle visualization:** CesiumJS and cesium-wind-layer are installed, but the wind-field backend endpoint and frontend `WindOverlay` / `TimelineScrubber` components are not yet implemented. This is the next work item.
 
 ---
 
 ## 6. Remaining Phases
+
+### Phase 3b -- Wind visualization (in progress)
+
+**Goal:** Display completed WindNinja output as animated wind particles over 3D terrain in the browser.
+
+**Backend (not yet started):**
+- Parse WindNinja ASCII grid output (speed + direction grids) and convert to U/V JSON
+- `GET /forecasts/{id}/wind-field/{timestep}` endpoint
+- Backend tests for wind-field parsing and API
+
+**Frontend (not yet started):**
+- `WindFieldResponse` type, API function, `useWindField` hook
+- `WindOverlay` component (cesium-wind-layer lifecycle, color gradient, terrain occlusion)
+- `TimelineScrubber` component (play/pause, step, slider, time display)
+- `WindLegend` component (color scale overlay with speed labels)
+- Integration into ForecastDetailPage for completed forecasts
 
 ### Phase 4 -- Cloud deployment and solver orchestration
 
@@ -191,19 +220,7 @@ These items were scoped for Phases 1-3 but are intentionally deferred or partial
 - Deploy the FastAPI backend (Cloud Run / App Runner / ECS)
 - Deploy the frontend as a static site (Cloud Storage + CDN, or Vercel/Netlify)
 
-### Phase 5 -- 3D wind visualization
-
-**Goal:** Display completed WindNinja output as animated wind particles over 3D terrain in the browser.
-
-- Parse WindNinja ASCII grid output (speed + direction grids) into a tiled wind-field texture (PNG or binary) on the backend
-- Replace or augment the MapLibre 2D map with CesiumJS for 3D terrain rendering
-- Integrate `cesium-wind-layer` for GPU-accelerated wind particle rendering
-- Add a timeline scrubber for multi-hour forecasts
-- Color-code particles by wind speed
-- Add elevation profile / cross-section tool
-- Overlay additional context: place names, peaks, ridgelines
-
-### Phase 6 -- Recurring forecasts, accounts, and polish
+### Phase 5 -- Recurring forecasts, accounts, and polish
 
 **Goal:** Automate scheduled forecast runs and add multi-user support.
 
@@ -219,9 +236,9 @@ These items were scoped for Phases 1-3 but are intentionally deferred or partial
 
 ## 7. Immediate Next Steps
 
-1. **Decide on cloud provider** — GCP vs AWS for compute, storage, and deployment
-2. **Implement `storage.py`** — wire up cloud storage (GCS or S3) for terrain cache, weather inputs, and solver output
-3. **Replace background tasks with a durable job queue** — the current in-process `BackgroundTasks` approach does not survive server restarts
-4. **Write Terraform in `infra/`** — provision container registry, compute, storage bucket, database, and task queue
-5. **Deploy the backend and frontend** — get the app accessible from a URL
+1. **Build the wind-field backend endpoint** — parse WindNinja ASCII grids, convert speed/direction to U/V, expose via `GET /forecasts/{id}/wind-field/{timestep}`
+2. **Integrate cesium-wind-layer** — `WindOverlay` component with GPU-accelerated particles, timeline scrubber, speed legend
+3. **Decide on cloud provider** — GCP vs AWS for compute, storage, and deployment
+4. **Implement `storage.py`** — wire up cloud storage (GCS or S3) for terrain cache, weather inputs, and solver output
+5. **Replace background tasks with a durable job queue** — the current in-process `BackgroundTasks` approach does not survive server restarts
 6. **Wire LCP into solver config** — use the already-cached LCP tiles for vegetation-aware solver runs instead of uniform roughness
