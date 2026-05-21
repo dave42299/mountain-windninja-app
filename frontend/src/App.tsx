@@ -1,6 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router";
 import { Toaster } from "@/components/ui/sonner";
+import AppLayout from "@/layouts/AppLayout";
+import MapPage from "@/pages/MapPage";
+import DashboardPage from "@/pages/DashboardPage";
+import ForecastDetailPage from "@/pages/ForecastDetailPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -11,27 +15,16 @@ const queryClient = new QueryClient({
   },
 });
 
-function HomePage() {
-  return (
-    <div className="flex h-screen items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold tracking-tight">
-          Mountain WindNinja
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          High-resolution wind forecasting for complex terrain
-        </p>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<HomePage />} />
+          <Route element={<AppLayout />}>
+            <Route path="/" element={<MapPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/forecasts/:id" element={<ForecastDetailPage />} />
+          </Route>
         </Routes>
       </BrowserRouter>
       <Toaster />
