@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation } from "react-router";
 import { Map, LayoutDashboard, Wind } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ThemeToggle from "@/components/ThemeToggle";
 
 const navLinks = [
   { to: "/", label: "Map", icon: Map },
@@ -42,6 +43,10 @@ export default function AppLayout() {
             );
           })}
         </nav>
+
+        <div className="ml-auto">
+          <ThemeToggle />
+        </div>
       </header>
 
       <main className="flex-1 overflow-hidden">

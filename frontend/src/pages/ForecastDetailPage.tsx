@@ -13,6 +13,7 @@ import {
 import StatusBadge from "@/components/StatusBadge";
 import StepIndicator from "@/components/StepIndicator";
 import ForecastDetailMap from "@/components/ForecastDetailMap";
+import OutputViewer from "@/components/OutputViewer";
 import { useForecast } from "@/hooks/use-forecasts";
 
 const ACTIVE_STATUSES = new Set([
@@ -151,6 +152,10 @@ export default function ForecastDetailPage() {
               />
             </CardContent>
           </Card>
+        </div>
+
+        <div className="mt-6">
+          <OutputViewer forecastId={forecast.id} status={forecast.status} />
         </div>
 
         <Card className="mt-6">

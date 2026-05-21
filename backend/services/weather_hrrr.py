@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -28,9 +29,14 @@ from .weather_models import HrrrCycle
 
 logger = logging.getLogger(__name__)
 
+
+def _naive_utc(dt: datetime) -> datetime:
+    """Strip tzinfo for Herbie which cannot compare tz-aware timestamps."""
+    return dt.replace(tzinfo=None)
+
 FORCING_NODATA = -9999.0
 
-_HRRR_SEARCH_STRING = ":(UGRD|VGRD):10 m above ground:"
+_HRRR_SEARCH_STRING = ":(?:UGRD|VGRD):10 m above ground:"
 
 
 class WeatherDownloadError(RuntimeError):
@@ -124,7 +130,7 @@ def check_hrrr_availability(cycles: list[HrrrCycle]) -> None:
     for cycle in cycles:
         try:
             herbie_instance = Herbie(
-                cycle.analysis_time,
+                _naive_utc(cycle.analysis_time),
                 model="hrrr",
                 product="sfc",
                 fxx=cycle.forecast_hour,
@@ -169,7 +175,7 @@ def download_hrrr_grib(cycle: HrrrCycle) -> Path:
 
     try:
         herbie_instance = Herbie(
-            cycle.analysis_time,
+            _naive_utc(cycle.analysis_time),
             model="hrrr",
             product="sfc",
             fxx=cycle.forecast_hour,

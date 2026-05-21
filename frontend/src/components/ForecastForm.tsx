@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { useCreateForecast } from "@/hooks/use-forecasts";
+import { SaveLocationButton } from "@/components/SavedLocations";
 import type { SelectedLocation } from "@/components/MapView";
 
 const forecastSchema = z.object({
@@ -106,11 +107,18 @@ export default function ForecastForm({
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
-      <div>
-        <Label className="text-xs text-muted-foreground">Location</Label>
-        <p className="mt-1 font-mono text-sm">
-          {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <Label className="text-xs text-muted-foreground">Location</Label>
+          <p className="mt-1 font-mono text-sm">
+            {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
+          </p>
+        </div>
+        <SaveLocationButton
+          latitude={location.latitude}
+          longitude={location.longitude}
+          sizeKm={watchedSizeKm}
+        />
       </div>
 
       <div>

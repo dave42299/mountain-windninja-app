@@ -7,17 +7,25 @@ import MapGL, {
   type MapLayerMouseEvent,
 } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { MapPin } from "lucide-react";
+import { Bookmark, MapPin } from "lucide-react";
 
 export interface SelectedLocation {
   latitude: number;
   longitude: number;
 }
 
+export interface SavedLocationMarker {
+  id: string;
+  latitude: number;
+  longitude: number;
+  label: string | null;
+}
+
 interface MapViewProps {
   selectedLocation: SelectedLocation | null;
   onLocationSelect: (location: SelectedLocation) => void;
   domainSizeKm?: number;
+  savedLocations?: SavedLocationMarker[];
 }
 
 const INITIAL_VIEW = {
@@ -34,6 +42,7 @@ export default function MapView({
   selectedLocation,
   onLocationSelect,
   domainSizeKm,
+  savedLocations = [],
 }: MapViewProps) {
   const [viewState, setViewState] = useState(INITIAL_VIEW);
 
@@ -64,6 +73,17 @@ export default function MapView({
       cursor="crosshair"
     >
       <NavigationControl position="top-right" />
+
+      {savedLocations.map((loc) => (
+        <Marker
+          key={loc.id}
+          latitude={loc.latitude}
+          longitude={loc.longitude}
+          anchor="bottom"
+        >
+          <Bookmark className="h-5 w-5 fill-primary/30 text-primary" />
+        </Marker>
+      ))}
 
       {selectedLocation && (
         <Marker
