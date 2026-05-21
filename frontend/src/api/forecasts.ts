@@ -5,6 +5,7 @@ import type {
   ForecastResponse,
   ForecastStatus,
   PaginatedForecastResponse,
+  WindFieldResponse,
 } from "./types";
 
 export interface ListForecastsParams {
@@ -55,4 +56,15 @@ export function getForecastOutputDownloadUrl(
   filename: string,
 ): string {
   return buildDownloadUrl(`/forecasts/${forecastId}/output/${filename}`);
+}
+
+export function getWindField(
+  forecastId: string,
+  timestep: number,
+  signal?: AbortSignal,
+): Promise<WindFieldResponse> {
+  return get<WindFieldResponse>(
+    `/forecasts/${forecastId}/wind-field/${timestep}`,
+    signal,
+  );
 }

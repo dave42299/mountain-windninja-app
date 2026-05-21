@@ -9,5 +9,7 @@ export const queryKeys = {
     list: (params: ListForecastsParams) => ["forecasts", params] as const,
     detail: (id: string | undefined) => ["forecast", id] as const,
     output: (id: string | undefined) => ["forecast-output", id] as const,
+    windField: (id: string | undefined, timestep: number) =>
+      ["forecast-wind-field", id, timestep] as const,
   },
 } as const;

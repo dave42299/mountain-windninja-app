@@ -9,6 +9,7 @@ import {
   createForecast,
   getForecast,
   getForecastOutput,
+  getWindField,
   listForecasts,
   type ListForecastsParams,
 } from "@/api/forecasts";
@@ -76,5 +77,18 @@ export function useForecastOutput(
     queryKey: queryKeys.forecasts.output(forecastId),
     queryFn: ({ signal }) => getForecastOutput(forecastId!, signal),
     enabled: !!forecastId && status === "completed",
+  });
+}
+
+export function useWindField(
+  forecastId: string | undefined,
+  timestep: number,
+  status: ForecastStatus | undefined,
+) {
+  return useQuery({
+    queryKey: queryKeys.forecasts.windField(forecastId, timestep),
+    queryFn: ({ signal }) => getWindField(forecastId!, timestep, signal),
+    enabled: !!forecastId && status === "completed",
+    staleTime: Infinity,
   });
 }

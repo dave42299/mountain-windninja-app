@@ -108,6 +108,29 @@ export interface ForecastOutputResponse {
   files: OutputFileInfo[];
 }
 
+// --- Wind field ---
+
+export interface WindFieldBounds {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+}
+
+export interface WindFieldResponse {
+  forecast_id: string;
+  timestep_index: number;
+  timestep_count: number;
+  valid_time: string;
+  width: number;
+  height: number;
+  bounds: WindFieldBounds;
+  u: number[];
+  v: number[];
+  speed_min: number;
+  speed_max: number;
+}
+
 // --- Error responses ---
 
 export interface ValidationErrorDetail {

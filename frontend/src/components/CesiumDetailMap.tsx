@@ -19,12 +19,14 @@ interface CesiumDetailMapProps {
   latitude: number;
   longitude: number;
   sizeKm: number;
+  onViewerReady?: (viewer: CesiumViewer | null) => void;
 }
 
 export default function CesiumDetailMap({
   latitude,
   longitude,
   sizeKm,
+  onViewerReady,
 }: CesiumDetailMapProps) {
   const viewerRef = useRef<CesiumViewer>(null);
 
@@ -41,8 +43,10 @@ export default function CesiumDetailMap({
         },
         duration: 0,
       });
+
+      onViewerReady?.(viewer);
     },
-    [latitude, longitude],
+    [latitude, longitude, onViewerReady],
   );
 
   const pinPosition = useMemo(

@@ -1,6 +1,8 @@
+import { useState, useCallback, useRef } from "react";
 import { useParams, useNavigate, Navigate } from "react-router";
 import { format } from "date-fns";
-import { ArrowLeft, AlertCircle, SearchX } from "lucide-react";
+import { ArrowLeft, AlertCircle, SearchX, Wind, EyeOff } from "lucide-react";
+import type { Viewer as CesiumViewer } from "cesium";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -15,13 +17,37 @@ import StatusBadge from "@/components/StatusBadge";
 import StepIndicator from "@/components/StepIndicator";
 import CesiumDetailMap from "@/components/CesiumDetailMap";
 import OutputViewer from "@/components/OutputViewer";
-import { useForecast } from "@/hooks/use-forecasts";
+import WindOverlay from "@/components/WindOverlay";
+import TimelineScrubber from "@/components/TimelineScrubber";
+import WindLegend from "@/components/WindLegend";
+import { useForecast, useWindField } from "@/hooks/use-forecasts";
 import { ACTIVE_STATUSES } from "@/api/types";
 
 export default function ForecastDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: forecast, isLoading, error } = useForecast(id);
+
+  const [currentTimestep, setCurrentTimestep] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [windVisible, setWindVisible] = useState(true);
+  const viewerRef = useRef<CesiumViewer | null>(null);
+
+  const isCompleted = forecast?.status === "completed";
+
+  const { data: windData } = useWindField(
+    forecast?.id,
+    currentTimestep,
+    forecast?.status,
+  );
+
+  const handleViewerReady = useCallback((viewer: CesiumViewer | null) => {
+    viewerRef.current = viewer;
+  }, []);
+
+  const handlePlayToggle = useCallback(() => {
+    setIsPlaying((prev) => !prev);
+  }, []);
 
   if (!id) {
     return <Navigate to="/dashboard" replace />;
@@ -115,6 +141,66 @@ export default function ForecastDetailPage() {
           </div>
         )}
 
+        {isCompleted && (
+          <div className="relative mt-6 overflow-hidden rounded-lg border">
+            <div className="h-[450px]">
+              <CesiumDetailMap
+                latitude={forecast.center_latitude}
+                longitude={forecast.center_longitude}
+                sizeKm={forecast.size_km}
+                onViewerReady={handleViewerReady}
+              />
+            </div>
+
+            <WindOverlay
+              viewer={viewerRef.current}
+              windData={windData ?? null}
+              visible={windVisible}
+              particleHeight={forecast.output_wind_height}
+            />
+
+            <div className="absolute bottom-3 left-3 z-10">
+              {windData && windData.timestep_count > 1 && (
+                <TimelineScrubber
+                  timestepCount={windData.timestep_count}
+                  currentTimestep={currentTimestep}
+                  onTimestepChange={setCurrentTimestep}
+                  validTime={windData.valid_time}
+                  isPlaying={isPlaying}
+                  onPlayToggle={handlePlayToggle}
+                />
+              )}
+            </div>
+
+            <div className="absolute bottom-3 right-3 z-10 flex flex-col items-end gap-2">
+              {windData && (
+                <WindLegend
+                  speedMinMps={windData.speed_min}
+                  speedMaxMps={windData.speed_max}
+                />
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 bg-background/90 backdrop-blur-sm"
+                onClick={() => setWindVisible((v) => !v)}
+              >
+                {windVisible ? (
+                  <>
+                    <EyeOff className="h-3.5 w-3.5" />
+                    Hide wind
+                  </>
+                ) : (
+                  <>
+                    <Wind className="h-3.5 w-3.5" />
+                    Show wind
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="mt-6 grid gap-6 md:grid-cols-2">
           <Card>
             <CardHeader className="pb-3">
@@ -173,20 +259,22 @@ export default function ForecastDetailPage() {
           <OutputViewer forecastId={forecast.id} status={forecast.status} />
         </div>
 
-        <Card className="mt-6">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Location</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-64 overflow-hidden rounded-md border">
-              <CesiumDetailMap
-                latitude={forecast.center_latitude}
-                longitude={forecast.center_longitude}
-                sizeKm={forecast.size_km}
-              />
-            </div>
-          </CardContent>
-        </Card>
+        {!isCompleted && (
+          <Card className="mt-6">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Location</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-64 overflow-hidden rounded-md border">
+                <CesiumDetailMap
+                  latitude={forecast.center_latitude}
+                  longitude={forecast.center_longitude}
+                  sizeKm={forecast.size_km}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
