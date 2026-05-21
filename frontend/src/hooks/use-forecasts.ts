@@ -3,7 +3,7 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
-import type { ForecastStatus } from "@/api/types";
+import type { ForecastCreate, ForecastStatus } from "@/api/types";
 import {
   createForecast,
   getForecast,
@@ -11,7 +11,7 @@ import {
   listForecasts,
   type ListForecastsParams,
 } from "@/api/forecasts";
-import type { ForecastCreate } from "@/api/types";
+import { queryKeys } from "@/api/query-keys";
 
 const ACTIVE_STATUSES: Set<ForecastStatus> = new Set([
   "queued",
@@ -43,7 +43,7 @@ function pollingIntervalForStatus(
 
 export function useForecasts(params: ListForecastsParams = {}) {
   return useQuery({
-    queryKey: ["forecasts", params],
+    queryKey: queryKeys.forecasts.list(params),
     queryFn: () => listForecasts(params),
     refetchInterval: (query) => {
       const data = query.state.data;
@@ -58,7 +58,7 @@ export function useForecasts(params: ListForecastsParams = {}) {
 
 export function useForecast(id: string | undefined) {
   return useQuery({
-    queryKey: ["forecast", id],
+    queryKey: queryKeys.forecasts.detail(id),
     queryFn: () => getForecast(id!),
     enabled: !!id,
     refetchInterval: (query) => {
@@ -73,7 +73,7 @@ export function useCreateForecast() {
   return useMutation({
     mutationFn: (body: ForecastCreate) => createForecast(body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["forecasts"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.forecasts.all });
     },
   });
 }
@@ -83,7 +83,7 @@ export function useForecastOutput(
   status: ForecastStatus | undefined,
 ) {
   return useQuery({
-    queryKey: ["forecast-output", forecastId],
+    queryKey: queryKeys.forecasts.output(forecastId),
     queryFn: () => getForecastOutput(forecastId!),
     enabled: !!forecastId && status === "completed",
   });

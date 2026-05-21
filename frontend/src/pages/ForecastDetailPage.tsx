@@ -1,6 +1,6 @@
-import { useParams, useNavigate } from "react-router";
+import { useParams, useNavigate, Navigate } from "react-router";
 import { format } from "date-fns";
-import { ArrowLeft, AlertCircle } from "lucide-react";
+import { ArrowLeft, AlertCircle, SearchX } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ApiError } from "@/api/client";
 import StatusBadge from "@/components/StatusBadge";
 import StepIndicator from "@/components/StepIndicator";
 import ForecastDetailMap from "@/components/ForecastDetailMap";
@@ -28,6 +29,10 @@ export default function ForecastDetailPage() {
   const navigate = useNavigate();
   const { data: forecast, isLoading, error } = useForecast(id);
 
+  if (!id) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -36,11 +41,27 @@ export default function ForecastDetailPage() {
     );
   }
 
+  const isNotFound = error instanceof ApiError && error.status === 404;
+
+  if (isNotFound) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4">
+        <SearchX className="h-10 w-10 text-muted-foreground/50" />
+        <p className="text-sm text-muted-foreground">
+          This forecast doesn't exist or has been removed.
+        </p>
+        <Button variant="outline" size="sm" onClick={() => navigate("/dashboard")}>
+          Go to dashboard
+        </Button>
+      </div>
+    );
+  }
+
   if (error || !forecast) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
         <p className="text-sm text-destructive">
-          {error?.message ?? "Forecast not found"}
+          {error?.message ?? "Failed to load forecast"}
         </p>
         <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
           Go back

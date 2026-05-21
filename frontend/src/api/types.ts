@@ -31,17 +31,29 @@ export interface ForecastAreaResponse {
 
 // --- Forecast ---
 
-export interface ForecastCreate {
-  forecast_area_id?: string;
-  latitude?: number;
-  longitude?: number;
-  size_km?: number;
+interface ForecastCreateBase {
   forecast_start: string;
   duration_hours: number;
   weather_model?: WeatherModel;
   solver_type?: SolverType;
   output_wind_height?: number;
 }
+
+export interface AdHocForecastCreate extends ForecastCreateBase {
+  latitude: number;
+  longitude: number;
+  size_km: number;
+  forecast_area_id?: undefined;
+}
+
+export interface AreaForecastCreate extends ForecastCreateBase {
+  forecast_area_id: string;
+  latitude?: undefined;
+  longitude?: undefined;
+  size_km?: undefined;
+}
+
+export type ForecastCreate = AdHocForecastCreate | AreaForecastCreate;
 
 export interface ForecastResponse {
   id: string;

@@ -23,7 +23,7 @@ const forecastSchema = z.object({
   size_km: z.coerce.number().min(1).max(50),
   forecast_start: z.string().min(1, "Forecast start is required"),
   duration_hours: z.coerce.number().int().min(1).max(48),
-  weather_model: z.enum(["hrrr", "nbm"]),
+  weather_model: z.enum(["hrrr"]),
   solver_type: z.enum(["mass_conservation", "momentum"]),
   output_wind_height: z.coerce.number().min(0.1).max(100),
 });
@@ -66,7 +66,7 @@ export default function ForecastForm({
       forecast_start: getDefaultStartTime(),
       duration_hours: 6,
       weather_model: "hrrr",
-      solver_type: "momentum",
+      solver_type: "mass_conservation",
       output_wind_height: 10,
     },
   });
@@ -190,16 +190,13 @@ export default function ForecastForm({
         <Label>Weather model</Label>
         <Select
           defaultValue="hrrr"
-          onValueChange={(val) =>
-            setValue("weather_model", val as "hrrr" | "nbm")
-          }
+          onValueChange={(val) => setValue("weather_model", "hrrr")}
         >
           <SelectTrigger className="mt-1.5">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="hrrr">HRRR (3 km)</SelectItem>
-            <SelectItem value="nbm">NBM (2.5 km)</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -207,7 +204,7 @@ export default function ForecastForm({
       <div>
         <Label>Solver type</Label>
         <Select
-          defaultValue="momentum"
+          defaultValue="mass_conservation"
           onValueChange={(val) =>
             setValue(
               "solver_type",
@@ -219,10 +216,10 @@ export default function ForecastForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="momentum">Momentum (OpenFOAM)</SelectItem>
             <SelectItem value="mass_conservation">
               Mass Conservation (fast)
             </SelectItem>
+            <SelectItem value="momentum">Momentum (OpenFOAM)</SelectItem>
           </SelectContent>
         </Select>
       </div>

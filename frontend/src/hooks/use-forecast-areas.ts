@@ -8,11 +8,12 @@ import {
   deleteForecastArea,
   listForecastAreas,
 } from "@/api/forecast-areas";
+import { queryKeys } from "@/api/query-keys";
 import type { ForecastAreaCreate } from "@/api/types";
 
 export function useForecastAreas() {
   return useQuery({
-    queryKey: ["forecast-areas"],
+    queryKey: queryKeys.forecastAreas.all,
     queryFn: listForecastAreas,
   });
 }
@@ -22,7 +23,7 @@ export function useCreateForecastArea() {
   return useMutation({
     mutationFn: (body: ForecastAreaCreate) => createForecastArea(body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["forecast-areas"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.forecastAreas.all });
     },
   });
 }
@@ -32,7 +33,7 @@ export function useDeleteForecastArea() {
   return useMutation({
     mutationFn: (id: string) => deleteForecastArea(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["forecast-areas"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.forecastAreas.all });
     },
   });
 }
