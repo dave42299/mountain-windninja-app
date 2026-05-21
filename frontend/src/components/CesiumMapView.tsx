@@ -4,19 +4,19 @@ import {
   Entity,
   RectangleGraphics,
   PointGraphics,
-  BillboardGraphics,
   ScreenSpaceEventHandler,
   ScreenSpaceEvent,
 } from "resium";
 import {
+  Cartesian2,
   Cartesian3,
   Cartographic,
   Color,
   createWorldTerrainAsync,
-  Ion,
   Math as CesiumMath,
   Rectangle,
   ScreenSpaceEventType,
+  UrlTemplateImageryProvider,
   type Viewer as CesiumViewer,
 } from "cesium";
 import type { SelectedLocation, SavedLocationMarker } from "@/types/map";
@@ -28,7 +28,7 @@ interface CesiumMapViewProps {
   savedLocations?: SavedLocationMarker[];
 }
 
-const INITIAL_DESTINATION = Cartesian3.fromDegrees(-105.78, 39.75, 40_000);
+const INITIAL_DESTINATION = Cartesian3.fromDegrees(-106.013, 39.168, 44_414);
 const INITIAL_ORIENTATION = {
   heading: CesiumMath.toRadians(0),
   pitch: CesiumMath.toRadians(-45),
@@ -49,27 +49,45 @@ export default function CesiumMapView({
   savedLocations = [],
 }: CesiumMapViewProps) {
   const viewerRef = useRef<CesiumViewer>(null);
+  const hasInitialized = useRef(false);
+
+  const viewerCallback = useCallback((viewer: CesiumViewer | null) => {
+    if (!viewer || hasInitialized.current) return;
+    hasInitialized.current = true;
+
+    // Dev-only: Expose the viewer to the window for debugging
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__cesiumViewer = viewer;
+    }
+
+    viewer.camera.setView({
+      destination: INITIAL_DESTINATION,
+      orientation: INITIAL_ORIENTATION,
+    });
+
+    const labelsOverlay = new UrlTemplateImageryProvider({
+      url: "https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}@2x.png",
+      credit: "CartoDB",
+    });
+    viewer.imageryLayers.addImageryProvider(labelsOverlay);
+  }, []);
 
   const handleClick = useCallback(
-    (event: { position: { x: number; y: number } }) => {
+    (
+      event:
+        | { position: Cartesian2 }
+        | { startPosition: Cartesian2; endPosition: Cartesian2 },
+    ) => {
+      if (!("position" in event)) return;
       const viewer = viewerRef.current;
       if (!viewer) return;
 
-      const cartesian = viewer.scene.pickPosition(event.position);
-      if (!cartesian) {
-        const ray = viewer.camera.getPickRay(event.position);
-        if (!ray) return;
-        const globeCartesian = viewer.scene.globe.pick(ray, viewer.scene);
-        if (!globeCartesian) return;
-        const carto = Cartographic.fromCartesian(globeCartesian);
-        onLocationSelect({
-          latitude: CesiumMath.toDegrees(carto.latitude),
-          longitude: CesiumMath.toDegrees(carto.longitude),
-        });
-        return;
-      }
+      const ray = viewer.camera.getPickRay(event.position);
+      if (!ray) return;
+      const globeCartesian = viewer.scene.globe.pick(ray, viewer.scene);
+      if (!globeCartesian) return;
 
-      const carto = Cartographic.fromCartesian(cartesian);
+      const carto = Cartographic.fromCartesian(globeCartesian);
       onLocationSelect({
         latitude: CesiumMath.toDegrees(carto.latitude),
         longitude: CesiumMath.toDegrees(carto.longitude),
@@ -101,8 +119,11 @@ export default function CesiumMapView({
 
   return (
     <Viewer
-      ref={viewerRef}
-      full
+      ref={(ref) => {
+        (viewerRef as React.MutableRefObject<CesiumViewer | null>).current =
+          ref?.cesiumElement ?? null;
+        viewerCallback(ref?.cesiumElement ?? null);
+      }}
       terrainProvider={terrainProvider}
       timeline={false}
       animation={false}
@@ -114,7 +135,7 @@ export default function CesiumMapView({
       fullscreenButton={false}
       infoBox={false}
       selectionIndicator={false}
-      style={{ cursor: "crosshair" }}
+      style={{ width: "100%", height: "100%", cursor: "crosshair" }}
     >
       <ScreenSpaceEventHandler>
         <ScreenSpaceEvent
@@ -164,14 +185,6 @@ export default function CesiumMapView({
     </Viewer>
   );
 }
-
-CesiumMapView.flyToInitial = function flyToInitial(viewer: CesiumViewer) {
-  viewer.camera.flyTo({
-    destination: INITIAL_DESTINATION,
-    orientation: INITIAL_ORIENTATION,
-    duration: 0,
-  });
-};
 
 function buildDomainRectangle(
   latitude: number,
