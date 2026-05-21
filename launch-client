@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FRONTEND_DIR="$SCRIPT_DIR/frontend"
+
+cd "$FRONTEND_DIR"
+
+# Install dependencies if node_modules is missing
+if [ ! -d "node_modules" ]; then
+  echo "[launch-client] Installing npm dependencies..."
+  npm install
+fi
+
+# Start Vite dev server
+echo "[launch-client] Starting Vite on http://localhost:5173..."
+exec npm run dev
